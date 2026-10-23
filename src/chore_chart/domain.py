@@ -21,12 +21,38 @@ class Weekday(str, Enum):
         for day in cls:
             if day.value.casefold() == normalized or day.name.casefold() == normalized:
                 return day
+        alias = _WEEKDAY_ALIASES.get(normalized)
+        if alias is not None:
+            return alias
         choices = ", ".join(day.value for day in cls)
         raise ValueError(f"Unknown weekday {value!r}. Choose one of: {choices}.")
 
     @property
     def order(self) -> int:
         return list(Weekday).index(self)
+
+
+_WEEKDAY_ALIASES = {
+    "m": Weekday.MONDAY,
+    "mo": Weekday.MONDAY,
+    "mon": Weekday.MONDAY,
+    "t": Weekday.TUESDAY,
+    "tu": Weekday.TUESDAY,
+    "tur": Weekday.TUESDAY,
+    "w": Weekday.WEDNESDAY,
+    "we": Weekday.WEDNESDAY,
+    "wed": Weekday.WEDNESDAY,
+    "th": Weekday.THURSDAY,
+    "thu": Weekday.THURSDAY,
+    "f": Weekday.FRIDAY,
+    "fr": Weekday.FRIDAY,
+    "fri": Weekday.FRIDAY,
+    "s": Weekday.SATURDAY,
+    "sa": Weekday.SATURDAY,
+    "sat": Weekday.SATURDAY,
+    "su": Weekday.SUNDAY,
+    "sun": Weekday.SUNDAY,
+}
 
 
 @dataclass(frozen=True, slots=True)

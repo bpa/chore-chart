@@ -305,6 +305,10 @@ def _run(args: argparse.Namespace, repository: SQLiteRepository) -> int:
             _set_all_availability(args.person, repository)
             print(f"Set all availability for {args.person}.")
             return 0
+        if args.availability_command == "clear":
+            repository.clear_availability(args.person)
+            print(f"Cleared availability for {args.person}.")
+            return 0
         if args.availability_command == "edit":
             _edit_availability(args.person, repository)
             print(f"Updated availability for {args.person}.")

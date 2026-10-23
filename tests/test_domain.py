@@ -17,6 +17,12 @@ def test_weekday_parse_accepts_names_and_values_case_insensitively():
     assert Weekday.FRIDAY.order == 4
 
 
+def test_weekday_parse_accepts_abbreviated_names():
+    assert Weekday.parse("sa") is Weekday.SATURDAY
+    assert Weekday.parse("th") is Weekday.THURSDAY
+    assert Weekday.parse("su") is Weekday.SUNDAY
+
+
 def test_weekday_parse_rejects_unknown_day():
     with pytest.raises(ValueError, match="Unknown weekday"):
         Weekday.parse("Funday")

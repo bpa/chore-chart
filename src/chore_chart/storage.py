@@ -267,6 +267,9 @@ class SQLiteRepository:
                 )
             )
 
+    def clear_availability(self, person_name: str) -> None:
+        self.set_availability(person_name, [])
+
     def add_chore(
         self,
         name: str,

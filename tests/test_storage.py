@@ -41,6 +41,21 @@ def test_setting_availability_replaces_previous_slots(repository):
     }
 
 
+def test_clear_availability_removes_all_slots(repository):
+    repository.add_person("Alex")
+    repository.set_availability(
+        "Alex",
+        [
+            AvailabilitySlot(Weekday.MONDAY, TimeRange.parse("08:00-12:00")),
+            AvailabilitySlot(Weekday.SATURDAY, TimeRange.parse("13:00-18:00")),
+        ],
+    )
+
+    repository.clear_availability("Alex")
+
+    assert repository.list_people()[0].availability == set()
+
+
 def test_new_person_starts_with_all_day_availability(repository):
     person = repository.add_person("Alex")
 
