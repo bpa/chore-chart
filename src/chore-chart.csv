@@ -1,0 +1,25 @@
+﻿Chore,Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday
+'Chef' (Dinner),Dad,Percy,Christian,Eliza,Percy,Liam,Alex
+'Clear Cherry Table' (Lunch),Christian,Dad,Alex,Eliza,Liam,Alex,Percy
+'Clear Table' (Dinner),Percy,Liam,Percy,Eliza,Dad,Liam,Liam
+'Clear Table' (Lunch),Alex,Dad,Christian,Christian,Alex,Eliza,Percy
+'Empty Dishwasher' (Dinner),Alex,Percy,Liam,Alex,Alex,Percy,Christian
+'Empty Dishwasher' (Lunch),Eliza,Christian,Dad,Eliza,Percy,Liam,Dad
+'Laundry' (anytime),Percy,Liam,Alex,Christian,Eliza,Christian,
+'Load Dishwasher' (Dinner),Dad,Dad,Eliza,Christian,Liam,Percy,Alex
+'Load Dishwasher' (Lunch),Eliza,Christian,Liam,Eliza,Dad,Alex,Percy
+'Put Games Away' (anytime),Alex,Liam,Christian,Eliza,Percy,Dad,
+'Set Table' (Dinner),Dad,Liam,Percy,Dad,Eliza,Christian,Alex
+'Sweep Floor' (anytime),Christian,Percy,Alex,Alex,Eliza,Dad,
+'Tidy Shoes' (anytime),Alex,Percy,Christian,Liam,Dad,Eliza,
+"'Vacuum LR, Hall' (anytime)",Percy,Dad,Eliza,Christian,Liam,Liam,
+'Vacuum Office' (anytime),Liam,Percy,Eliza,Alex,Christian,Dad,
+'Wash Counter' (Dinner),Eliza,Liam,Percy,Dad,Alex,Christian,Alex
+'Wash Counter' (Lunch),Liam,Christian,Alex,Percy,Dad,Eliza,Dad
+'Wash Table' (Dinner),Christian,Alex,Liam,Dad,Christian,Eliza,Eliza
+'Wash Table' (Lunch),Alex,Percy,Percy,Liam,Eliza,Dad,Christian
+Lawn (anytime),Liam,Eliza,Dad,Christian,Percy,Christian,
+Office (anytime),Alex,Eliza,Liam,Liam,Dad,Percy,
+Pad (anytime),Liam,Eliza,Christian,Alex,Dad,Percy,
+Patio (anytime),Liam,Alex,Dad,Eliza,Christian,Liam,
+sort2 (anytime),Liam,Eliza,Percy,Alex,Christian,Dad,
