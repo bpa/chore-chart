@@ -372,7 +372,7 @@ def test_existing_quoted_chore_and_schedule_values_are_migrated(tmp_path):
         connection.executescript(
             "CREATE TABLE people (id INTEGER PRIMARY KEY, name VARCHAR(120) UNIQUE);"
             "CREATE TABLE availability (id INTEGER PRIMARY KEY, person_id INTEGER, weekday VARCHAR(9), "
-            "time_label VARCHAR(80));"
+            "time_label VARCHAR(80), start_minute INTEGER, end_minute INTEGER, label VARCHAR(160));"
             "CREATE TABLE chores (id INTEGER PRIMARY KEY, name VARCHAR(160) UNIQUE, label VARCHAR(160));"
             "CREATE TABLE occurrences (id INTEGER PRIMARY KEY, chore_id INTEGER, weekday VARCHAR(9), "
             "time_label VARCHAR(80), start_minute INTEGER, end_minute INTEGER);"
@@ -381,12 +381,12 @@ def test_existing_quoted_chore_and_schedule_values_are_migrated(tmp_path):
             "chore_label VARCHAR(160), weekday VARCHAR(9), time_label VARCHAR(80), start_minute INTEGER, "
             "end_minute INTEGER, person_name VARCHAR(120));"
             "INSERT INTO people VALUES (1, 'Alex');"
-            "INSERT INTO availability VALUES (1, 1, 'Monday', '00:00-24:00');"
+            "INSERT INTO availability VALUES (1, 1, 'Monday', '00:00-24:00', 0, 1440, NULL);"
             "INSERT INTO chores VALUES (1, '''Dishes''', '""Kitchen""');"
             "INSERT INTO occurrences VALUES (1, 1, 'Monday', 'Morning', 540, 600);"
             "INSERT INTO occurrences VALUES (2, 1, 'Tuesday', 'Evening', 1080, 1200);"
             "INSERT INTO schedules VALUES (1, '2026-01-01 00:00:00', 3);"
-            "INSERT INTO schedule_assignments VALUES (1, 1, '''Dishes''', '""Kitchen""', 'Monday', 'Morning', 540, 600, 'Alex');"
+            "INSERT INTO schedule_assignments VALUES (1, 1, 'Old Dishes', 'Dishes', 'Monday', 'Morning', 540, 600, 'Alex');"
             "INSERT INTO schedule_assignments VALUES (2, 1, '''Dishes''', '""Kitchen""', 'Tuesday', 'Evening', 1080, 1200, 'Alex');"
         )
         connection.execute(

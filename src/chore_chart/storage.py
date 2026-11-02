@@ -161,7 +161,7 @@ class SQLiteRepository:
             if labels_missing:
                 connection.exec_driver_sql("ALTER TABLE availability ADD COLUMN label VARCHAR(160)")
                 connection.exec_driver_sql("DELETE FROM availability")
-            elif range_missing and "time_label" in columns["availability"]:
+            elif "time_label" in columns["availability"]:
                 connection.exec_driver_sql("DELETE FROM availability")
 
             if "time_label" not in columns["occurrences"]:
@@ -286,8 +286,10 @@ class SQLiteRepository:
                 column["name"] for column in inspect(connection).get_columns("schedule_assignments")
             }
             if "chore_name" in assignment_columns:
+                chore_label_column = "chore_label" if "chore_label" in assignment_columns else "NULL"
                 legacy_assignments = connection.exec_driver_sql(
-                    "SELECT id, schedule_id, chore_name, person_name, weekday, time_label, "
+                    "SELECT id, schedule_id, chore_name, "
+                    f"{chore_label_column}, person_name, weekday, time_label, "
                     "start_minute, end_minute FROM schedule_assignments ORDER BY id"
                 ).all()
                 connection.exec_driver_sql(
@@ -299,9 +301,11 @@ class SQLiteRepository:
                 )
                 for assignment in legacy_assignments:
                     old_chore_id = chore_id_by_name.get(normalize_chore_text(assignment[2]))
-                    section_key = normalize_chore_text(assignment[5]).casefold()
+                    if old_chore_id is None:
+                        old_chore_id = chore_id_by_name.get(normalize_chore_text(assignment[3] or ""))
+                    section_key = normalize_chore_text(assignment[6]).casefold()
                     target_chore_id = section_chore_ids.get((old_chore_id, section_key))
-                    if target_chore_id is None or assignment[3] not in person_id_by_name:
+                    if target_chore_id is None or assignment[4] not in person_id_by_name:
                         raise ValueError("A saved assignment references a missing chore or person.")
                     chore_row = connection.exec_driver_sql(
                         "SELECT section_id FROM chores WHERE id = ?", (target_chore_id,)
@@ -312,8 +316,8 @@ class SQLiteRepository:
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             assignment[0], assignment[1], target_chore_id,
-                            person_id_by_name[assignment[3]], chore_row[0], assignment[4],
-                            assignment[6], assignment[7],
+                            person_id_by_name[assignment[4]], chore_row[0], assignment[5],
+                            assignment[7], assignment[8],
                         ),
                     )
                 connection.exec_driver_sql("DROP TABLE schedule_assignments")

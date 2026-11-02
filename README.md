@@ -18,7 +18,7 @@ npm install
 npm run build
 ```
 
-The batch launcher uses `src/chore_chart.sqlite3` so the web app shares the existing project data. Open `http://127.0.0.1:8000/`; API documentation is at `http://127.0.0.1:8000/docs`.
+The batch launcher uses the top-level `chore_chart.sqlite3` database. Open `http://127.0.0.1:8000/`; API documentation is at `http://127.0.0.1:8000/docs`.
 
 For frontend development with hot reload, run the API and Vite separately:
 
