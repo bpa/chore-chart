@@ -125,7 +125,7 @@ function ScheduleBlocks({ blocks, onChange }) {
   return (
     <div className="schedule-blocks">
       {blocks.map((block) => (
-        <fieldset className="schedule-block" key={block.id}>
+        <fieldset className={`schedule-block${block.start_time || block.end_time ? '' : ' anytime'}`} key={block.id}>
           <div className="block-heading">
             <legend>Time block</legend>
             {blocks.length > 1 && (
@@ -137,13 +137,24 @@ function ScheduleBlocks({ blocks, onChange }) {
               >×</button>
             )}
           </div>
-          <div className="time-fields">
+          <label className="field-label">
+            <span>Time</span>
+            <select
+              value={block.start_time || block.end_time ? 'specific' : 'anytime'}
+              onChange={(event) => updateBlock(block.id, event.target.value === 'anytime'
+                ? { start_time: '', end_time: '' }
+                : { start_time: '00:06', end_time: '23:00' })}
+            >
+              <option value="anytime">Anytime</option>
+              <option value="specific">Specific time</option>
+            </select>
+          </label>
+          {(block.start_time || block.end_time) && <div className="time-fields">
             <label className="field-label">
               <span>Start</span>
               <input
                 type="time"
                 onChange={(event) => updateBlock(block.id, { start_time: event.target.value })}
-                placeholder="00:06"
                 value={block.start_time}
               />
             </label>
@@ -152,11 +163,10 @@ function ScheduleBlocks({ blocks, onChange }) {
               <input
                 type="time"
                 onChange={(event) => updateBlock(block.id, { end_time: event.target.value })}
-                placeholder="23:00"
                 value={block.end_time}
               />
             </label>
-          </div>
+          </div>}
           <DayPicker selectedDays={block.days} onChange={(days) => updateBlock(block.id, { days })} />
         </fieldset>
       ))}

@@ -98,6 +98,7 @@ input::placeholder { color: #9a9d95; }
 .field-label small { color: var(--muted); font-weight: 400; }
 .schedule-blocks { display: grid; gap: 10px; max-width: 720px; margin: 18px 0; }
 .schedule-block { display: grid; grid-template-columns: minmax(120px, .7fr) minmax(170px, 1fr) minmax(220px, 1.2fr); align-items: end; gap: 12px; min-width: 0; padding: 12px; border: 1px solid var(--line); }
+.schedule-block.anytime { grid-template-columns: minmax(150px, .7fr) minmax(220px, 1.2fr); }
 .block-heading { display: flex; align-items: center; justify-content: space-between; grid-column: 1 / -1; margin-bottom: -5px; }
 .block-heading legend { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .time-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
