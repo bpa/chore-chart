@@ -6,6 +6,13 @@ from datetime import datetime
 from enum import Enum
 
 
+def normalize_chore_text(value: str) -> str:
+    text = value.strip()
+    if len(text) >= 2 and text[0] in {"'", '"'} and text[-1] == text[0]:
+        text = text[1:-1].strip()
+    return text
+
+
 class Weekday(str, Enum):
     MONDAY = "Monday"
     TUESDAY = "Tuesday"
@@ -96,27 +103,47 @@ class AvailabilitySlot:
 
 
 @dataclass(frozen=True, slots=True)
+class Section:
+    name: str
+    section_id: int | None = None
+    order_index: int = 0
+
+    def __post_init__(self) -> None:
+        name = normalize_chore_text(self.name)
+        if not name:
+            raise ValueError("Section name cannot be empty.")
+        if self.order_index < 0:
+            raise ValueError("Section order cannot be negative.")
+        object.__setattr__(self, "name", name)
+
+
+@dataclass(frozen=True, slots=True)
 class ChoreOccurrence:
     chore_name: str
     weekday: Weekday
-    time_label: str
+    section_name: str
     occurrence_id: int | None = None
     chore_id: int | None = None
     chore_label: str | None = None
     time_range: TimeRange | None = None
+    section_id: int | None = None
+    section_order: int = 0
+    chore_order: int = 0
 
     def __post_init__(self) -> None:
-        chore_name = self.chore_name.strip()
-        time_label = self.time_label.strip()
+        chore_name = normalize_chore_text(self.chore_name)
+        section_name = normalize_chore_text(self.section_name)
         if not chore_name:
             raise ValueError("Chore name cannot be empty.")
-        if not time_label:
-            raise ValueError("Chore time label cannot be empty.")
+        if not section_name:
+            raise ValueError("Section name cannot be empty.")
+        if self.section_order < 0 or self.chore_order < 0:
+            raise ValueError("Section and chore order cannot be negative.")
         if self.time_range is not None and not isinstance(self.time_range, TimeRange):
             raise ValueError("Chore occurrence must use a valid time range.")
         object.__setattr__(self, "chore_name", chore_name)
-        object.__setattr__(self, "time_label", time_label)
-        label = self.chore_label.strip() if self.chore_label is not None else chore_name
+        object.__setattr__(self, "section_name", section_name)
+        label = normalize_chore_text(self.chore_label) if self.chore_label is not None else chore_name
         if not label:
             raise ValueError("Chore label cannot be empty.")
         object.__setattr__(self, "chore_label", label)
@@ -141,24 +168,48 @@ class Chore:
     occurrences: tuple[ChoreOccurrence, ...]
     chore_id: int | None = None
     label: str | None = None
+    section_id: int | None = None
+    section_name: str | None = None
+    section_order: int = 0
+    order_index: int = 0
 
     def __post_init__(self) -> None:
-        name = self.name.strip()
+        name = normalize_chore_text(self.name)
         if not name:
             raise ValueError("Chore name cannot be empty.")
         if not self.occurrences:
             raise ValueError("A chore must have at least one scheduled occurrence.")
         if any(item.chore_name.casefold() != name.casefold() for item in self.occurrences):
             raise ValueError("Each occurrence must belong to its chore.")
-        label = self.label.strip() if self.label is not None else name
+        label = normalize_chore_text(self.label) if self.label is not None else name
         if not label:
             raise ValueError("Chore label cannot be empty.")
+        section_name = (
+            normalize_chore_text(self.section_name)
+            if self.section_name is not None
+            else self.occurrences[0].section_name
+        )
+        if any(item.section_name.casefold() != section_name.casefold() for item in self.occurrences):
+            raise ValueError("Each chore occurrence must belong to its chore's section.")
+        if self.section_order < 0 or self.order_index < 0:
+            raise ValueError("Section and chore order cannot be negative.")
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "label", label)
+        object.__setattr__(self, "section_name", section_name)
         object.__setattr__(
             self,
             "occurrences",
-            tuple(replace(item, chore_label=label) for item in self.occurrences),
+            tuple(
+                replace(
+                    item,
+                    chore_label=label,
+                    section_id=self.section_id,
+                    section_name=section_name,
+                    section_order=self.section_order,
+                    chore_order=self.order_index,
+                )
+                for item in self.occurrences
+            ),
         )
 
 
@@ -183,6 +234,7 @@ class AssignmentRule:
 class Assignment:
     occurrence: ChoreOccurrence
     person_name: str
+    person_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

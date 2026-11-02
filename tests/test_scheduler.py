@@ -166,6 +166,44 @@ def test_label_repeat_objective_spreads_each_label_across_people():
         assignments_by_label[label].add(assignment.person_name)
 
 
+def test_section_workload_is_spread_across_people():
+    occurrences = [
+        make_occurrence("morning_a", Weekday.MONDAY, "Morning"),
+        make_occurrence("morning_b", Weekday.TUESDAY, "Morning"),
+        make_occurrence("evening_a", Weekday.WEDNESDAY, "Evening"),
+        make_occurrence("evening_b", Weekday.THURSDAY, "Evening"),
+    ]
+    people = [make_person(name, *occurrences) for name in ("Alex", "Sam")]
+    chores = [Chore(item.chore_name, (item,)) for item in occurrences]
+
+    schedule = generate_schedule(people, chores, seed=12)
+
+    assignments_by_section: dict[str, list[str]] = {"Morning": [], "Evening": []}
+    for assignment in schedule.assignments:
+        assignments_by_section[assignment.occurrence.section_name].append(assignment.person_name)
+    assert all(sorted(people) == ["Alex", "Sam"] for people in assignments_by_section.values())
+
+
+def test_daily_workload_is_spread_when_weekly_totals_are_already_balanced():
+    occurrences = [
+        make_occurrence("monday_a", Weekday.MONDAY, "Section A"),
+        make_occurrence("monday_b", Weekday.MONDAY, "Section B"),
+        make_occurrence("tuesday_a", Weekday.TUESDAY, "Section C"),
+        make_occurrence("tuesday_b", Weekday.TUESDAY, "Section D"),
+    ]
+    people = [make_person(name, *occurrences) for name in ("Alex", "Sam")]
+    chores = [Chore(item.chore_name, (item,)) for item in occurrences]
+
+    schedule = generate_schedule(people, chores, seed=23)
+
+    for weekday in (Weekday.MONDAY, Weekday.TUESDAY):
+        assert {
+            item.person_name
+            for item in schedule.assignments
+            if item.occurrence.weekday == weekday
+        } == {"Alex", "Sam"}
+
+
 def test_large_schedule_completes_within_thirty_seconds():
     people = [
         Person(
@@ -182,7 +220,7 @@ def test_large_schedule_completes_within_thirty_seconds():
             f"Group{index % 8}",
             TimeRange.parse(f"{15 + index % 6:02d}:00-{16 + index % 6:02d}:00"),
         )
-        chores.append(Chore(occurrence.chore_name, (occurrence,), label=occurrence.time_label))
+        chores.append(Chore(occurrence.chore_name, (occurrence,), label=occurrence.section_name))
 
     started = perf_counter()
     schedule = generate_schedule(people, chores, seed=42)

@@ -52,7 +52,7 @@ def test_domain_objects_trim_names_and_labels():
     assert person.name == "Alex"
     assert str(slot.time_range) == "16:00-19:00"
     assert occurrence.chore_name == "Dishes"
-    assert occurrence.time_label == "Morning"
+    assert occurrence.section_name == "Morning"
 
 
 def test_time_range_parsing_and_overlap_minutes():
@@ -80,6 +80,21 @@ def test_chore_label_is_propagated_to_occurrences():
     )
 
     assert chore.occurrences[0].chore_label == "Trash"
+
+
+def test_chore_names_and_labels_strip_matching_outer_quotes():
+    occurrence = ChoreOccurrence(
+        "'Dishes'",
+        Weekday.MONDAY,
+        "Morning",
+        chore_label='"Kitchen"',
+    )
+    chore = Chore("'Dishes'", (occurrence,), label='"Kitchen"')
+
+    assert chore.name == "Dishes"
+    assert chore.label == "Kitchen"
+    assert chore.occurrences[0].chore_name == "Dishes"
+    assert chore.occurrences[0].chore_label == "Kitchen"
 
 
 @pytest.mark.parametrize(("minimum", "maximum"), [(-1, None), (2, 1)])

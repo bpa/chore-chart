@@ -1,0 +1,26 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap');
+
+:root {
+  --ink: #202c29;
+  --ink-soft: #4b5b55;
+  --muted: #858d85;
+  --green: #2f7059;
+  --coral: #d65d46;
+  --line: #d9ddd5;
+  --line-soft: #e9ebe5;
+  --paper: #f7f7f2;
+  --sans: 'DM Sans', 'Segoe UI', sans-serif;
+  --display: 'Newsreader', Georgia, serif;
+  color: var(--ink);
+  background: var(--paper);
+  font: 14px/1.45 var(--sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* { box-sizing: border-box; }
+body { min-width: 320px; min-height: 100vh; margin: 0; }
+button,input,select { font-family: var(--sans); }
+button:focus-visible { outline: 2px solid var(--coral); outline-offset: 2px; }

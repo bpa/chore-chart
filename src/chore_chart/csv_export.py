@@ -12,11 +12,16 @@ def write_schedule_csv(schedule: Schedule, output: TextIO) -> None:
     weekdays = list(Weekday)
     writer.writerow(["Chore", *(day.value for day in weekdays)])
 
-    rows: dict[tuple[str, str, TimeRange | None], dict[Weekday, str]] = {}
-    labels: dict[tuple[str, str, TimeRange | None], str] = {}
+    rows: dict[tuple[int | str, int | str, TimeRange | None], dict[Weekday, str]] = {}
+    labels: dict[tuple[int | str, int | str, TimeRange | None], str] = {}
+    sections: dict[tuple[int | str, int | str, TimeRange | None], str] = {}
     for assignment in schedule.assignments:
         occurrence = assignment.occurrence
-        row_key = (occurrence.chore_name, occurrence.time_label, occurrence.time_range)
+        row_key = (
+            occurrence.chore_id or occurrence.chore_name,
+            occurrence.section_id or occurrence.section_name,
+            occurrence.time_range,
+        )
         day_assignments = rows.setdefault(row_key, {})
         if occurrence.weekday in day_assignments:
             raise ValueError(
@@ -24,19 +29,21 @@ def write_schedule_csv(schedule: Schedule, output: TextIO) -> None:
             )
         day_assignments[occurrence.weekday] = assignment.person_name
         labels[row_key] = occurrence.chore_label or occurrence.chore_name
+        sections[row_key] = occurrence.section_name
 
     for row_key in sorted(
         rows,
         key=lambda item: (
             labels[item].casefold(),
-            item[0].casefold(),
-            item[1].casefold(),
+            sections[item].casefold(),
+            str(item[0]).casefold(),
             item[2].start_minute if item[2] is not None else -1,
         ),
     ):
         assignments = rows[row_key]
-        chore_name, time_label, time_range = row_key
-        display_time = f"{time_label} {time_range}" if time_range is not None else time_label
+        time_range = row_key[2]
+        display_section = sections[row_key]
+        display_time = f"{display_section} {time_range}" if time_range is not None else display_section
         writer.writerow(
             [
             f"{labels[row_key]} ({display_time})",

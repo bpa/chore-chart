@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import RLock
 
 from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint, create_engine, delete, event, func, inspect, select
 from sqlalchemy.engine import Engine
@@ -16,13 +17,18 @@ from chore_chart.domain import (
     ChoreOccurrence,
     Person,
     Schedule,
+    Section,
     TimeRange,
     Weekday,
+    normalize_chore_text,
 )
 
 
 class Base(DeclarativeBase):
     pass
+
+
+_SCHEMA_LOCK = RLock()
 
 
 class PersonRecord(Base):
@@ -35,15 +41,22 @@ class PersonRecord(Base):
 class AvailabilityRecord(Base):
     __tablename__ = "availability"
     __table_args__ = (
-        UniqueConstraint("person_id", "weekday", "time_label"),
+        UniqueConstraint("person_id", "weekday", "start_minute", "end_minute"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     person_id: Mapped[int] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"))
     weekday: Mapped[str] = mapped_column(String(9))
-    time_label: Mapped[str] = mapped_column(String(80))
     start_minute: Mapped[int] = mapped_column(Integer, default=0)
     end_minute: Mapped[int] = mapped_column(Integer, default=1440)
+
+
+class SectionRecord(Base):
+    __tablename__ = "sections"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True)
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class ChoreRecord(Base):
@@ -52,18 +65,19 @@ class ChoreRecord(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(160), unique=True)
     label: Mapped[str] = mapped_column(String(160), default="")
+    section_id: Mapped[int] = mapped_column(ForeignKey("sections.id"))
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class OccurrenceRecord(Base):
     __tablename__ = "occurrences"
     __table_args__ = (
-        UniqueConstraint("chore_id", "weekday", "time_label", "start_minute", "end_minute"),
+        UniqueConstraint("chore_id", "weekday", "start_minute", "end_minute"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     chore_id: Mapped[int] = mapped_column(ForeignKey("chores.id", ondelete="CASCADE"))
     weekday: Mapped[str] = mapped_column(String(9))
-    time_label: Mapped[str] = mapped_column(String(80))
     start_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
     end_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -90,13 +104,12 @@ class AssignmentRecord(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     schedule_id: Mapped[int] = mapped_column(ForeignKey("schedules.id", ondelete="CASCADE"))
-    chore_name: Mapped[str] = mapped_column(String(160))
-    chore_label: Mapped[str] = mapped_column(String(160), default="")
+    chore_id: Mapped[int] = mapped_column(ForeignKey("chores.id"))
+    person_id: Mapped[int] = mapped_column(ForeignKey("people.id"))
+    section_id: Mapped[int] = mapped_column(ForeignKey("sections.id"))
     weekday: Mapped[str] = mapped_column(String(9))
-    time_label: Mapped[str] = mapped_column(String(80))
     start_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
     end_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    person_name: Mapped[str] = mapped_column(String(120))
 
 
 class SQLiteRepository:
@@ -111,78 +124,204 @@ class SQLiteRepository:
         self._engine = create_engine(url, future=True)
         self._enable_foreign_keys(self._engine)
         self._sessions = sessionmaker(self._engine, expire_on_commit=False)
-        Base.metadata.create_all(self._engine)
-        self._upgrade_schema()
+        with _SCHEMA_LOCK:
+            Base.metadata.create_all(self._engine)
+            self._upgrade_schema()
 
     def _upgrade_schema(self) -> None:
         with self._engine.begin() as connection:
-            chore_columns = {column["name"] for column in inspect(connection).get_columns("chores")}
-            if "label" not in chore_columns:
-                connection.exec_driver_sql("ALTER TABLE chores ADD COLUMN label VARCHAR(160)")
-            connection.exec_driver_sql("UPDATE chores SET label = name WHERE label IS NULL OR label = ''")
+            tables = set(inspect(connection).get_table_names())
+            if "chores" not in tables:
+                return
 
-            assignment_columns = {
-                column["name"]
-                for column in inspect(connection).get_columns("schedule_assignments")
+            columns = {
+                table: {column["name"] for column in inspect(connection).get_columns(table)}
+                for table in ("chores", "availability", "occurrences", "schedule_assignments")
             }
-            if "chore_label" not in assignment_columns:
+            chore_additions = {
+                "label": "VARCHAR(160) NOT NULL DEFAULT ''",
+                "section_id": "INTEGER REFERENCES sections(id)",
+                "order_index": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for name, definition in chore_additions.items():
+                if name not in columns["chores"]:
+                    connection.exec_driver_sql(f"ALTER TABLE chores ADD COLUMN {name} {definition}")
+            if connection.exec_driver_sql(
+                "SELECT 1 FROM chores WHERE label IS NULL OR label = '' LIMIT 1"
+            ).first():
+                connection.exec_driver_sql("UPDATE chores SET label = name WHERE label IS NULL OR label = ''")
+
+            range_missing = not {"start_minute", "end_minute"}.issubset(columns["availability"])
+            for table in ("availability", "occurrences", "schedule_assignments"):
+                for name in ("start_minute", "end_minute"):
+                    if name not in columns[table]:
+                        connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} INTEGER")
+            if range_missing and "time_label" in columns["availability"]:
+                person_ids = connection.exec_driver_sql("SELECT id FROM people").scalars().all()
+                connection.exec_driver_sql("DELETE FROM availability")
                 connection.exec_driver_sql(
-                    "ALTER TABLE schedule_assignments ADD COLUMN chore_label VARCHAR(160)"
+                    "INSERT INTO availability (person_id, weekday, start_minute, end_minute) "
+                    "SELECT people.id, weekdays.name, 0, 1440 FROM people "
+                    "CROSS JOIN (SELECT 'Monday' AS name UNION ALL SELECT 'Tuesday' "
+                    "UNION ALL SELECT 'Wednesday' UNION ALL SELECT 'Thursday' "
+                    "UNION ALL SELECT 'Friday' UNION ALL SELECT 'Saturday' UNION ALL SELECT 'Sunday') AS weekdays"
                 )
-            connection.exec_driver_sql(
-                "UPDATE schedule_assignments SET chore_label = chore_name "
-                "WHERE chore_label IS NULL OR chore_label = ''"
-            )
-            for table, columns in (
-                ("availability", {"start_minute": "INTEGER NOT NULL DEFAULT 0", "end_minute": "INTEGER NOT NULL DEFAULT 1440"}),
-                ("occurrences", {"start_minute": "INTEGER", "end_minute": "INTEGER"}),
-                ("schedule_assignments", {"start_minute": "INTEGER", "end_minute": "INTEGER"}),
-            ):
-                existing_columns = {
-                    column["name"] for column in inspect(connection).get_columns(table)
-                }
-                availability_ranges_missing = table == "availability" and not {
-                    "start_minute", "end_minute"
-                }.issubset(existing_columns)
-                for name, definition in columns.items():
-                    if name not in existing_columns:
+
+            if "time_label" not in columns["occurrences"]:
+                return
+
+            chore_rows = connection.exec_driver_sql(
+                "SELECT id, name, label FROM chores ORDER BY id"
+            ).all()
+            normalized_names = [normalize_chore_text(row[1]) for row in chore_rows]
+            if len(normalized_names) != len(set(normalized_names)):
+                raise ValueError("Quote normalization would merge existing chore names.")
+            for (chore_id, name, label), normalized_name in zip(chore_rows, normalized_names):
+                connection.exec_driver_sql(
+                    "UPDATE chores SET name = ?, label = ? WHERE id = ?",
+                    (normalized_name, normalize_chore_text(label or name), chore_id),
+                )
+            chore_rows = [
+                (chore_id, normalized_name, normalize_chore_text(label or name))
+                for (chore_id, name, label), normalized_name in zip(chore_rows, normalized_names)
+            ]
+
+            legacy_occurrences = connection.exec_driver_sql(
+                "SELECT id, chore_id, weekday, time_label, start_minute, end_minute "
+                "FROM occurrences ORDER BY chore_id, id"
+            ).all()
+            legacy_by_chore: dict[int, list[Any]] = {}
+            for occurrence in legacy_occurrences:
+                legacy_by_chore.setdefault(occurrence[1], []).append(occurrence)
+
+            section_by_name: dict[str, tuple[int, str, int]] = {}
+            for occurrence in legacy_occurrences:
+                section_name = normalize_chore_text(occurrence[3])
+                section_key = section_name.casefold()
+                if section_key not in section_by_name:
+                    section_order = len(section_by_name)
+                    connection.exec_driver_sql(
+                        "INSERT INTO sections (name, order_index) VALUES (?, ?)",
+                        (section_name, section_order),
+                    )
+                    section_id = connection.exec_driver_sql("SELECT last_insert_rowid()").scalar_one()
+                    section_by_name[section_key] = (section_id, section_name, section_order)
+
+            used_names = {normalize_chore_text(row[1]) for row in chore_rows}
+            section_chore_ids: dict[tuple[int, str], int] = {}
+            chore_order_by_section: dict[int, int] = {}
+            for chore_id, chore_name, chore_label in chore_rows:
+                groups: dict[str, list[Any]] = {}
+                for occurrence in legacy_by_chore.get(chore_id, []):
+                    group_key = normalize_chore_text(occurrence[3]).casefold()
+                    groups.setdefault(group_key, []).append(occurrence)
+                if not groups:
+                    raise ValueError(f"Chore {chore_name!r} has no occurrences to assign to a section.")
+                for group_index, group_key in enumerate(groups):
+                    section_id, section_name, section_order = section_by_name[group_key]
+                    chore_order = chore_order_by_section.get(section_id, 0)
+                    chore_order_by_section[section_id] = chore_order + 1
+                    target_id = chore_id
+                    if group_index:
+                        suffix = f" [{section_name}]"
+                        clone_name = f"{chore_name[:160 - len(suffix)]}{suffix}"
+                        collision_index = 2
+                        candidate = clone_name
+                        while candidate in used_names:
+                            marker = f" [{section_name} {collision_index}]"
+                            candidate = f"{chore_name[:160 - len(marker)]}{marker}"
+                            collision_index += 1
+                        clone_name = candidate
+                        used_names.add(clone_name)
                         connection.exec_driver_sql(
-                            f"ALTER TABLE {table} ADD COLUMN {name} {definition}"
+                            "INSERT INTO chores (name, label, section_id, order_index) VALUES (?, ?, ?, ?)",
+                            (clone_name, normalize_chore_text(chore_label or chore_name), section_id, chore_order),
                         )
-                if availability_ranges_missing:
-                    connection.exec_driver_sql("DELETE FROM availability")
-                    person_ids = connection.exec_driver_sql("SELECT id FROM people").scalars().all()
-                    for person_id in person_ids:
-                        for day in Weekday:
-                            connection.exec_driver_sql(
-                                "INSERT INTO availability "
-                                "(person_id, weekday, time_label, start_minute, end_minute) "
-                                "VALUES (?, ?, ?, 0, 1440)",
-                                (person_id, day.value, "00:00-24:00"),
-                            )
-            unique_constraints = inspect(connection).get_unique_constraints("occurrences")
-            if any(
-                set(constraint["column_names"]) == {"chore_id", "weekday", "time_label"}
-                for constraint in unique_constraints
-            ):
+                        target_id = connection.exec_driver_sql("SELECT last_insert_rowid()").scalar_one()
+                    else:
+                        connection.exec_driver_sql(
+                            "UPDATE chores SET section_id = ?, order_index = ? WHERE id = ?",
+                            (section_id, chore_order, chore_id),
+                        )
+                    section_chore_ids[(chore_id, group_key)] = target_id
+
+            connection.exec_driver_sql(
+                "CREATE TABLE occurrences_new ("
+                "id INTEGER PRIMARY KEY, chore_id INTEGER NOT NULL REFERENCES chores(id) ON DELETE CASCADE, "
+                "weekday VARCHAR(9) NOT NULL, start_minute INTEGER, end_minute INTEGER, "
+                "CONSTRAINT uq_occurrence_slot UNIQUE (chore_id, weekday, start_minute, end_minute))"
+            )
+            for occurrence in legacy_occurrences:
+                target_id = section_chore_ids[(occurrence[1], normalize_chore_text(occurrence[3]).casefold())]
                 connection.exec_driver_sql(
-                    "CREATE TABLE occurrences_new ("
-                    "id INTEGER PRIMARY KEY, "
-                    "chore_id INTEGER NOT NULL REFERENCES chores(id) ON DELETE CASCADE, "
-                    "weekday VARCHAR(9) NOT NULL, "
-                    "time_label VARCHAR(80) NOT NULL, "
-                    "start_minute INTEGER, end_minute INTEGER, "
-                    "CONSTRAINT uq_occurrence_range UNIQUE "
-                    "(chore_id, weekday, time_label, start_minute, end_minute))"
+                    "INSERT INTO occurrences_new (id, chore_id, weekday, start_minute, end_minute) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (occurrence[0], target_id, occurrence[2], occurrence[4], occurrence[5]),
                 )
+            connection.exec_driver_sql("DROP TABLE occurrences")
+            connection.exec_driver_sql("ALTER TABLE occurrences_new RENAME TO occurrences")
+
+            availability_rows = connection.exec_driver_sql(
+                "SELECT id, person_id, weekday, start_minute, end_minute FROM availability"
+            ).all()
+            connection.exec_driver_sql(
+                "CREATE TABLE availability_new ("
+                "id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE, "
+                "weekday VARCHAR(9) NOT NULL, start_minute INTEGER NOT NULL, end_minute INTEGER NOT NULL, "
+                "CONSTRAINT uq_availability_window UNIQUE (person_id, weekday, start_minute, end_minute))"
+            )
+            for availability in availability_rows:
                 connection.exec_driver_sql(
-                    "INSERT INTO occurrences_new "
-                    "(id, chore_id, weekday, time_label, start_minute, end_minute) "
-                    "SELECT id, chore_id, weekday, time_label, start_minute, end_minute "
-                    "FROM occurrences"
+                    "INSERT OR IGNORE INTO availability_new "
+                    "(id, person_id, weekday, start_minute, end_minute) VALUES (?, ?, ?, ?, ?)",
+                    tuple(availability),
                 )
-                connection.exec_driver_sql("DROP TABLE occurrences")
-                connection.exec_driver_sql("ALTER TABLE occurrences_new RENAME TO occurrences")
+            connection.exec_driver_sql("DROP TABLE availability")
+            connection.exec_driver_sql("ALTER TABLE availability_new RENAME TO availability")
+
+            chore_id_by_name = {normalize_chore_text(row[1]): row[0] for row in chore_rows}
+            person_id_by_name = {
+                row[1]: row[0]
+                for row in connection.exec_driver_sql("SELECT id, name FROM people").all()
+            }
+            assignment_columns = {
+                column["name"] for column in inspect(connection).get_columns("schedule_assignments")
+            }
+            if "chore_name" in assignment_columns:
+                legacy_assignments = connection.exec_driver_sql(
+                    "SELECT id, schedule_id, chore_name, person_name, weekday, time_label, "
+                    "start_minute, end_minute FROM schedule_assignments ORDER BY id"
+                ).all()
+                connection.exec_driver_sql(
+                    "CREATE TABLE schedule_assignments_new ("
+                    "id INTEGER PRIMARY KEY, schedule_id INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE, "
+                    "chore_id INTEGER NOT NULL REFERENCES chores(id), person_id INTEGER NOT NULL REFERENCES people(id), "
+                    "section_id INTEGER NOT NULL REFERENCES sections(id), weekday VARCHAR(9) NOT NULL, "
+                    "start_minute INTEGER, end_minute INTEGER)"
+                )
+                for assignment in legacy_assignments:
+                    old_chore_id = chore_id_by_name.get(normalize_chore_text(assignment[2]))
+                    section_key = normalize_chore_text(assignment[5]).casefold()
+                    target_chore_id = section_chore_ids.get((old_chore_id, section_key))
+                    if target_chore_id is None or assignment[3] not in person_id_by_name:
+                        raise ValueError("A saved assignment references a missing chore or person.")
+                    chore_row = connection.exec_driver_sql(
+                        "SELECT section_id FROM chores WHERE id = ?", (target_chore_id,)
+                    ).one()
+                    connection.exec_driver_sql(
+                        "INSERT INTO schedule_assignments_new "
+                        "(id, schedule_id, chore_id, person_id, section_id, weekday, start_minute, end_minute) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            assignment[0], assignment[1], target_chore_id,
+                            person_id_by_name[assignment[3]], chore_row[0], assignment[4],
+                            assignment[6], assignment[7],
+                        ),
+                    )
+                connection.exec_driver_sql("DROP TABLE schedule_assignments")
+                connection.exec_driver_sql(
+                    "ALTER TABLE schedule_assignments_new RENAME TO schedule_assignments"
+                )
 
     @staticmethod
     def _enable_foreign_keys(engine: Engine) -> None:
@@ -194,6 +333,103 @@ class SQLiteRepository:
 
     def close(self) -> None:
         self._engine.dispose()
+
+    def list_sections(self) -> list[Section]:
+        with self._sessions() as session:
+            rows = session.scalars(
+                select(SectionRecord).order_by(SectionRecord.order_index, SectionRecord.id)
+            ).all()
+        return [Section(row.name, row.id, row.order_index) for row in rows]
+
+    def get_section(self, section_id: int) -> Section:
+        with self._sessions() as session:
+            row = session.get(SectionRecord, section_id)
+            if row is None:
+                raise ValueError(f"Unknown section {section_id}.")
+            return Section(row.name, row.id, row.order_index)
+
+    def add_section(self, name: str) -> Section:
+        section = Section(name)
+        with self._sessions.begin() as session:
+            existing = session.scalars(select(SectionRecord)).all()
+            if any(row.name.casefold() == section.name.casefold() for row in existing):
+                raise ValueError(f"Section {section.name!r} already exists.")
+            order_index = max((row.order_index for row in existing), default=-1) + 1
+            record = SectionRecord(name=section.name, order_index=order_index)
+            session.add(record)
+            session.flush()
+            section_id = record.id
+        return Section(section.name, section_id, order_index)
+
+    def update_section(self, section_id: int, name: str, order_index: int) -> Section:
+        section = Section(name, section_id, order_index)
+        with self._sessions.begin() as session:
+            records = session.scalars(
+                select(SectionRecord).order_by(SectionRecord.order_index, SectionRecord.id)
+            ).all()
+            record = next((item for item in records if item.id == section_id), None)
+            if record is None:
+                raise ValueError(f"Unknown section {section_id}.")
+            duplicate = session.scalar(
+                select(SectionRecord).where(
+                    SectionRecord.id != section_id,
+                    func.lower(SectionRecord.name) == section.name.casefold(),
+                )
+            )
+            if duplicate is not None:
+                raise ValueError(f"Section {section.name!r} already exists.")
+            record.name = section.name
+            records.remove(record)
+            records.insert(min(order_index, len(records)), record)
+            for index, item in enumerate(records):
+                item.order_index = index
+        return Section(section.name, section_id, records.index(record))
+
+    def reorder_sections(self, section_ids: Sequence[int]) -> list[Section]:
+        with self._sessions.begin() as session:
+            records = session.scalars(select(SectionRecord)).all()
+            records_by_id = {record.id: record for record in records}
+            if len(section_ids) != len(set(section_ids)) or set(section_ids) != set(records_by_id):
+                raise ValueError("Section order must include every section exactly once.")
+            for order_index, section_id in enumerate(section_ids):
+                records_by_id[section_id].order_index = order_index
+        return self.list_sections()
+
+    def reorder_chores(self, section_id: int, chore_ids: Sequence[int]) -> list[Chore]:
+        with self._sessions.begin() as session:
+            section = session.get(SectionRecord, section_id)
+            if section is None:
+                raise ValueError(f"Unknown section {section_id}.")
+            records = session.scalars(
+                select(ChoreRecord).where(ChoreRecord.section_id == section_id)
+            ).all()
+            records_by_id = {record.id: record for record in records}
+            if len(chore_ids) != len(set(chore_ids)) or set(chore_ids) != set(records_by_id):
+                raise ValueError("Chore order must include every chore in the section exactly once.")
+            for order_index, chore_id in enumerate(chore_ids):
+                records_by_id[chore_id].order_index = order_index
+        return self.list_chores()
+
+    @staticmethod
+    def _get_section(session, section_name: str, section_id: int | None) -> SectionRecord:
+        if section_id is not None:
+            record = session.get(SectionRecord, section_id)
+            if record is None:
+                raise ValueError(f"Unknown section {section_id}.")
+            return record
+        normalized_name = normalize_chore_text(section_name)
+        record = session.scalar(
+            select(SectionRecord).where(func.lower(SectionRecord.name) == normalized_name.casefold())
+        )
+        if record is None:
+            order_index = session.scalar(select(func.max(SectionRecord.order_index)))
+            record = SectionRecord(
+                name=normalized_name,
+                order_index=(order_index if order_index is not None else -1) + 1,
+            )
+            session.add(record)
+            session.flush()
+        return record
 
     def add_person(self, name: str) -> Person:
         person = Person(name)
@@ -209,7 +445,6 @@ class SQLiteRepository:
                 AvailabilityRecord(
                     person_id=person_id,
                     weekday=day.value,
-                    time_label=str(full_day),
                     start_minute=full_day.start_minute,
                     end_minute=full_day.end_minute,
                 )
@@ -253,7 +488,6 @@ class SQLiteRepository:
                 AvailabilityRecord(
                     person_id=person.id,
                     weekday=slot.weekday.value,
-                    time_label=str(slot.time_range),
                     start_minute=slot.time_range.start_minute,
                     end_minute=slot.time_range.end_minute,
                 )
@@ -275,42 +509,68 @@ class SQLiteRepository:
         name: str,
         occurrences: Sequence[ChoreOccurrence],
         label: str | None = None,
+        section_name: str | None = None,
+        section_id: int | None = None,
+        order_index: int | None = None,
     ) -> Chore:
-        chore_name = name.strip()
+        chore_name = normalize_chore_text(name)
         if not chore_name:
             raise ValueError("Chore name cannot be empty.")
         if not occurrences:
             raise ValueError("A chore must have at least one scheduled occurrence.")
-        chore_label = label.strip() if label is not None else chore_name
+        chore_label = normalize_chore_text(label) if label is not None else chore_name
         if not chore_label:
             raise ValueError("Chore label cannot be empty.")
         normalized = [
             ChoreOccurrence(
                 chore_name=chore_name,
                 weekday=occurrence.weekday,
-                time_label=occurrence.time_label,
+                section_name=section_name or occurrence.section_name,
                 chore_label=chore_label,
                 time_range=occurrence.time_range,
             )
             for occurrence in occurrences
         ]
         keys = [
-            (item.weekday, item.time_label.casefold(), item.time_range)
+            (item.weekday, item.time_range)
             for item in normalized
         ]
         if len(keys) != len(set(keys)):
-            raise ValueError("A chore cannot have duplicate occurrences at the same weekday and time.")
+            raise ValueError("A chore cannot have duplicate occurrences on the same day and time.")
 
         with self._sessions.begin() as session:
+            section = self._get_section(session, section_name or normalized[0].section_name, section_id)
             record = session.scalar(select(ChoreRecord).where(ChoreRecord.name == chore_name))
             if record is None:
-                record = ChoreRecord(name=chore_name, label=chore_label)
+                section_chores = session.scalars(
+                    select(ChoreRecord)
+                    .where(ChoreRecord.section_id == section.id)
+                    .order_by(ChoreRecord.order_index, ChoreRecord.id)
+                ).all()
+                target_order = (
+                    min(order_index, len(section_chores))
+                    if order_index is not None
+                    else len(section_chores)
+                )
+                for index, existing_chore in enumerate(section_chores):
+                    if index >= target_order:
+                        existing_chore.order_index = index + 1
+                record = ChoreRecord(
+                    name=chore_name,
+                    label=chore_label,
+                    section_id=section.id,
+                    order_index=target_order,
+                )
                 session.add(record)
                 session.flush()
-            elif label is None:
-                chore_label = record.label or chore_name
             else:
-                record.label = chore_label
+                if record.section_id != section.id:
+                    raise ValueError("Use update_chore to move a chore to a different section.")
+                if label is not None:
+                    record.label = chore_label
+                if order_index is not None:
+                    record.order_index = order_index
+                chore_label = record.label or chore_name
 
             existing = session.scalars(
                 select(OccurrenceRecord).where(OccurrenceRecord.chore_id == record.id)
@@ -318,7 +578,6 @@ class SQLiteRepository:
             existing_keys = {
                 (
                     item.weekday,
-                    item.time_label.casefold(),
                     TimeRange(item.start_minute, item.end_minute)
                     if item.start_minute is not None and item.end_minute is not None
                     else None,
@@ -327,13 +586,12 @@ class SQLiteRepository:
             }
             new_occurrences = [
                 item for item in normalized
-                if (item.weekday.value, item.time_label.casefold(), item.time_range) not in existing_keys
+                if (item.weekday.value, item.time_range) not in existing_keys
             ]
             session.add_all(
                 OccurrenceRecord(
                     chore_id=record.id,
                     weekday=occurrence.weekday.value,
-                    time_label=occurrence.time_label,
                     start_minute=(
                         occurrence.time_range.start_minute if occurrence.time_range else None
                     ),
@@ -345,7 +603,7 @@ class SQLiteRepository:
             all_occurrences = session.scalars(
                 select(OccurrenceRecord)
                 .where(OccurrenceRecord.chore_id == record.id)
-                .order_by(OccurrenceRecord.id)
+                .order_by(OccurrenceRecord.weekday, OccurrenceRecord.start_minute, OccurrenceRecord.id)
             ).all()
             record_id = record.id
 
@@ -353,11 +611,14 @@ class SQLiteRepository:
             name=chore_name,
             label=chore_label,
             chore_id=record_id,
+            section_id=section.id,
+            section_name=section.name,
+            section_order=section.order_index,
+            order_index=record.order_index,
             occurrences=tuple(
                 ChoreOccurrence(
                     chore_name=chore_name,
                     weekday=Weekday.parse(item.weekday),
-                    time_label=item.time_label,
                     occurrence_id=item.id,
                     chore_id=record_id,
                     chore_label=chore_label,
@@ -366,13 +627,131 @@ class SQLiteRepository:
                         if item.start_minute is not None and item.end_minute is not None
                         else None
                     ),
+                    section_id=section.id,
+                    section_name=section.name,
+                    section_order=section.order_index,
+                    chore_order=record.order_index,
                 )
                 for item in sorted(
                     all_occurrences,
                     key=lambda item: (
                         Weekday.parse(item.weekday).order,
                         item.start_minute if item.start_minute is not None else -1,
-                        item.time_label.casefold(),
+                    ),
+                )
+            ),
+        )
+
+    def update_chore(
+        self,
+        chore_id: int,
+        occurrences: Sequence[ChoreOccurrence],
+        label: str | None = None,
+        section_name: str | None = None,
+        section_id: int | None = None,
+        order_index: int | None = None,
+    ) -> Chore:
+        if not occurrences:
+            raise ValueError("A chore must have at least one scheduled occurrence.")
+        with self._sessions.begin() as session:
+            record = session.get(ChoreRecord, chore_id)
+            if record is None:
+                raise ValueError(f"Unknown chore {chore_id}.")
+            section = self._get_section(
+                session,
+                section_name or occurrences[0].section_name,
+                section_id,
+            )
+            chore_name = record.name
+            chore_label = normalize_chore_text(label) if label is not None else record.label or chore_name
+            if not chore_label:
+                raise ValueError("Chore label cannot be empty.")
+            normalized = tuple(
+                ChoreOccurrence(
+                    chore_name=chore_name,
+                    weekday=occurrence.weekday,
+                    section_name=section.name,
+                    chore_label=chore_label,
+                    time_range=occurrence.time_range,
+                )
+                for occurrence in occurrences
+            )
+            keys = [(item.weekday, item.time_range) for item in normalized]
+            if len(keys) != len(set(keys)):
+                raise ValueError("A chore cannot have duplicate occurrences on the same day and time.")
+            record.label = chore_label
+            original_section_id = record.section_id
+            record.section_id = section.id
+            source_records = session.scalars(
+                select(ChoreRecord)
+                .where(ChoreRecord.section_id == original_section_id, ChoreRecord.id != record.id)
+                .order_by(ChoreRecord.order_index, ChoreRecord.id)
+            ).all()
+            for index, item in enumerate(source_records):
+                item.order_index = index
+            destination_records = session.scalars(
+                select(ChoreRecord)
+                .where(ChoreRecord.section_id == section.id, ChoreRecord.id != record.id)
+                .order_by(ChoreRecord.order_index, ChoreRecord.id)
+            ).all()
+            if order_index is not None:
+                target_order = min(order_index, len(destination_records))
+            elif original_section_id == section.id:
+                target_order = min(record.order_index, len(destination_records))
+            else:
+                target_order = len(destination_records)
+            destination_records.insert(target_order, record)
+            record.section_id = section.id
+            for index, item in enumerate(destination_records):
+                item.order_index = index
+            session.execute(delete(OccurrenceRecord).where(OccurrenceRecord.chore_id == record.id))
+            session.add_all(
+                OccurrenceRecord(
+                    chore_id=record.id,
+                    weekday=occurrence.weekday.value,
+                    start_minute=(occurrence.time_range.start_minute if occurrence.time_range else None),
+                    end_minute=(occurrence.time_range.end_minute if occurrence.time_range else None),
+                )
+                for occurrence in normalized
+            )
+            session.flush()
+            record_id = record.id
+            saved_occurrences = session.scalars(
+                select(OccurrenceRecord)
+                .where(OccurrenceRecord.chore_id == record_id)
+                .order_by(OccurrenceRecord.weekday, OccurrenceRecord.start_minute, OccurrenceRecord.id)
+            ).all()
+
+        return Chore(
+            name=chore_name,
+            label=chore_label,
+            chore_id=record_id,
+            section_id=section.id,
+            section_name=section.name,
+            section_order=section.order_index,
+            order_index=record.order_index,
+            occurrences=tuple(
+                ChoreOccurrence(
+                    chore_name=chore_name,
+                    weekday=Weekday.parse(item.weekday),
+                    occurrence_id=item.id,
+                    chore_id=record_id,
+                    chore_label=chore_label,
+                    time_range=(
+                        TimeRange(item.start_minute, item.end_minute)
+                        if item.start_minute is not None and item.end_minute is not None
+                        else None
+                    ),
+                    section_id=section.id,
+                    section_name=section.name,
+                    section_order=section.order_index,
+                    chore_order=record.order_index,
+                )
+                for item in sorted(
+                    saved_occurrences,
+                    key=lambda item: (
+                        Weekday.parse(item.weekday).order,
+                        item.start_minute if item.start_minute is not None else -1,
                     ),
                 )
             ),
@@ -380,14 +759,13 @@ class SQLiteRepository:
 
     def remove_chore(
         self,
-        name: str,
+        chore_id: int,
         occurrences: Sequence[ChoreOccurrence] | None = None,
     ) -> int:
-        chore_name = name.strip()
         with self._sessions.begin() as session:
-            chore = session.scalar(select(ChoreRecord).where(ChoreRecord.name == chore_name))
+            chore = session.get(ChoreRecord, chore_id)
             if chore is None:
-                raise ValueError(f"Unknown chore {chore_name!r}.")
+                raise ValueError(f"Unknown chore {chore_id}.")
             if occurrences is None:
                 count = session.scalar(
                     select(func.count())
@@ -402,17 +780,21 @@ class SQLiteRepository:
                 statement = delete(OccurrenceRecord).where(
                     OccurrenceRecord.chore_id == chore.id,
                     OccurrenceRecord.weekday == occurrence.weekday.value,
-                    func.lower(OccurrenceRecord.time_label) == occurrence.time_label.casefold(),
                 )
                 if occurrence.time_range is not None:
                     statement = statement.where(
                         OccurrenceRecord.start_minute == occurrence.time_range.start_minute,
                         OccurrenceRecord.end_minute == occurrence.time_range.end_minute,
                     )
+                else:
+                    statement = statement.where(
+                        OccurrenceRecord.start_minute.is_(None),
+                        OccurrenceRecord.end_minute.is_(None),
+                    )
                 result = session.execute(statement)
                 removed += result.rowcount or 0
             if not removed:
-                raise ValueError(f"No matching occurrence found for chore {chore_name!r}.")
+                raise ValueError(f"No matching occurrence found for chore {chore.name!r}.")
 
             remaining = session.scalar(
                 select(func.count())
@@ -425,7 +807,11 @@ class SQLiteRepository:
 
     def list_chores(self) -> list[Chore]:
         with self._sessions() as session:
-            chore_records = session.scalars(select(ChoreRecord).order_by(ChoreRecord.name)).all()
+            chore_rows = session.execute(
+                select(ChoreRecord, SectionRecord)
+                .join(SectionRecord, ChoreRecord.section_id == SectionRecord.id)
+                .order_by(SectionRecord.order_index, ChoreRecord.order_index, ChoreRecord.id)
+            ).all()
             occurrence_records = session.scalars(select(OccurrenceRecord)).all()
         by_chore: dict[int, list[OccurrenceRecord]] = {}
         for row in occurrence_records:
@@ -435,11 +821,14 @@ class SQLiteRepository:
                 name=record.name,
                 label=record.label or record.name,
                 chore_id=record.id,
+                section_id=section.id,
+                section_name=section.name,
+                section_order=section.order_index,
+                order_index=record.order_index,
                 occurrences=tuple(
                     ChoreOccurrence(
                         chore_name=record.name,
                         weekday=Weekday.parse(item.weekday),
-                        time_label=item.time_label,
                         occurrence_id=item.id,
                         chore_id=record.id,
                         chore_label=record.label or record.name,
@@ -448,18 +837,21 @@ class SQLiteRepository:
                             if item.start_minute is not None and item.end_minute is not None
                             else None
                         ),
+                        section_id=section.id,
+                        section_name=section.name,
+                        section_order=section.order_index,
+                        chore_order=record.order_index,
                     )
                     for item in sorted(
                         by_chore.get(record.id, []),
                         key=lambda item: (
                             Weekday.parse(item.weekday).order,
                             item.start_minute if item.start_minute is not None else -1,
-                            item.time_label.casefold(),
                         ),
                     )
                 ),
             )
-            for record in chore_records
+            for record, section in chore_rows
         ]
 
     def set_rule(self, person_name: str, minimum: int, maximum: int | None) -> AssignmentRule:
@@ -515,10 +907,13 @@ class SQLiteRepository:
             session.add_all(
                 AssignmentRecord(
                     schedule_id=schedule_id,
-                    chore_name=assignment.occurrence.chore_name,
-                    chore_label=assignment.occurrence.chore_label or assignment.occurrence.chore_name,
+                    chore_id=assignment.occurrence.chore_id,
+                    person_id=assignment.person_id
+                    or session.scalar(
+                        select(PersonRecord.id).where(PersonRecord.name == assignment.person_name)
+                    ),
+                    section_id=assignment.occurrence.section_id,
                     weekday=assignment.occurrence.weekday.value,
-                    time_label=assignment.occurrence.time_label,
                     start_minute=(
                         assignment.occurrence.time_range.start_minute
                         if assignment.occurrence.time_range
@@ -529,64 +924,34 @@ class SQLiteRepository:
                         if assignment.occurrence.time_range
                         else None
                     ),
-                    person_name=assignment.person_name,
                 )
                 for assignment in schedule.assignments
             )
-        return Schedule(
-            assignments=schedule.assignments,
-            schedule_id=schedule_id,
-            seed=schedule.seed,
-            created_at=created_at,
-        )
+        return self.get_schedule(schedule_id)
 
     def recent_schedules(self, limit: int = 4) -> list[Schedule]:
         with self._sessions() as session:
-            schedule_rows = session.scalars(
-                select(ScheduleRecord).order_by(ScheduleRecord.id.desc()).limit(limit)
+            schedule_ids = session.scalars(
+                select(ScheduleRecord.id).order_by(ScheduleRecord.id.desc()).limit(limit)
             ).all()
-            result = []
-            for row in reversed(schedule_rows):
-                assignments = session.scalars(
-                    select(AssignmentRecord)
-                    .where(AssignmentRecord.schedule_id == row.id)
-                    .order_by(AssignmentRecord.id)
-                ).all()
-                result.append(
-                    Schedule(
-                        schedule_id=row.id,
-                        seed=row.seed,
-                        created_at=row.created_at,
-                        assignments=tuple(
-                            Assignment(
-                                occurrence=ChoreOccurrence(
-                                    chore_name=assignment.chore_name,
-                                    weekday=Weekday.parse(assignment.weekday),
-                                    time_label=assignment.time_label,
-                                    chore_label=assignment.chore_label or assignment.chore_name,
-                                    time_range=(
-                                        TimeRange(assignment.start_minute, assignment.end_minute)
-                                        if assignment.start_minute is not None and assignment.end_minute is not None
-                                        else None
-                                    ),
-                                ),
-                                person_name=assignment.person_name,
-                            )
-                            for assignment in assignments
-                        ),
-                    )
-                )
-        return result
+        return [self.get_schedule(schedule_id) for schedule_id in reversed(schedule_ids)]
 
     def get_schedule(self, schedule_id: int) -> Schedule:
         with self._sessions() as session:
             row = session.get(ScheduleRecord, schedule_id)
             if row is None:
                 raise ValueError(f"No saved schedule with id {schedule_id}.")
-            assignments = session.scalars(
-                select(AssignmentRecord)
+            assignments = session.execute(
+                select(AssignmentRecord, ChoreRecord, PersonRecord, SectionRecord)
+                .join(ChoreRecord, AssignmentRecord.chore_id == ChoreRecord.id)
+                .join(PersonRecord, AssignmentRecord.person_id == PersonRecord.id)
+                .join(SectionRecord, AssignmentRecord.section_id == SectionRecord.id)
                 .where(AssignmentRecord.schedule_id == schedule_id)
-                .order_by(AssignmentRecord.id)
+                .order_by(
+                    SectionRecord.order_index,
+                    ChoreRecord.order_index,
+                    AssignmentRecord.id,
+                )
             ).all()
         return Schedule(
             schedule_id=row.id,
@@ -595,19 +960,25 @@ class SQLiteRepository:
             assignments=tuple(
                 Assignment(
                     occurrence=ChoreOccurrence(
-                        chore_name=assignment.chore_name,
+                        chore_name=chore.name,
                         weekday=Weekday.parse(assignment.weekday),
-                        time_label=assignment.time_label,
-                        chore_label=assignment.chore_label or assignment.chore_name,
+                        section_name=section.name,
+                        occurrence_id=None,
+                        chore_id=chore.id,
+                        chore_label=chore.label or chore.name,
                         time_range=(
                             TimeRange(assignment.start_minute, assignment.end_minute)
                             if assignment.start_minute is not None and assignment.end_minute is not None
                             else None
                         ),
+                        section_id=section.id,
+                        section_order=section.order_index,
+                        chore_order=chore.order_index,
                     ),
-                    person_name=assignment.person_name,
+                    person_name=person.name,
+                    person_id=person.id,
                 )
-                for assignment in assignments
+                for assignment, chore, person, section in assignments
             ),
         )
 

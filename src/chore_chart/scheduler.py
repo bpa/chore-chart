@@ -27,6 +27,10 @@ class ScheduleSearchLimitError(ValueError):
     pass
 
 
+def _section_key(occurrence: ChoreOccurrence) -> int | str:
+    return occurrence.section_id if occurrence.section_id is not None else occurrence.section_name.casefold()
+
+
 def _heuristic_schedule(
     people: Sequence[Person],
     occurrences: Sequence[ChoreOccurrence],
@@ -39,6 +43,7 @@ def _heuristic_schedule(
     person_count = len(people)
     occurrence_count = len(occurrences)
     labels = [(item.chore_label or item.chore_name).casefold() for item in occurrences]
+    sections = [_section_key(item) for item in occurrences]
     conflicts: list[set[int]] = [set() for _ in occurrences]
     day_groups: dict[Weekday, list[int]] = {}
     for occurrence_index, occurrence in enumerate(occurrences):
@@ -82,8 +87,25 @@ def _heuristic_schedule(
     )
     label_sizes = Counter(labels)
     label_repeat_bound = sum(size * (size - 1) // 2 for size in label_sizes.values())
+    section_sizes = Counter(sections)
+    section_repeat_bound = sum(size * (size - 1) // 2 for size in section_sizes.values())
+    day_sizes = Counter(item.weekday for item in occurrences)
+    day_repeat_bound = sum(size * (size - 1) // 2 for size in day_sizes.values())
     label_repeat_weight = history_bound + 1
-    workload_weight = label_repeat_bound * label_repeat_weight + history_bound + 1
+    section_repeat_weight = label_repeat_bound * label_repeat_weight + history_bound + 1
+    day_repeat_weight = (
+        section_repeat_bound * section_repeat_weight
+        + label_repeat_bound * label_repeat_weight
+        + history_bound
+        + 1
+    )
+    workload_weight = (
+        day_repeat_bound * day_repeat_weight
+        + section_repeat_bound * section_repeat_weight
+        + label_repeat_bound * label_repeat_weight
+        + history_bound
+        + 1
+    )
 
     minimums = [rules.get(person.name, AssignmentRule(person.name)).minimum for person in people]
     maximums = [
@@ -107,7 +129,9 @@ def _heuristic_schedule(
         assignments = [-1] * occurrence_count
         assigned_by_person: list[set[int]] = [set() for _ in people]
         loads = [0] * person_count
+        daily_loads: list[Counter[Weekday]] = [Counter() for _ in people]
         labels_by_person: list[Counter[str]] = [Counter() for _ in people]
+        sections_by_person: list[Counter[int | str]] = [Counter() for _ in people]
         remaining_domains = [set(candidates) for candidates in eligibility.values()]
         remaining_by_person = [
             sum(person_index in domain for domain in remaining_domains)
@@ -156,10 +180,14 @@ def _heuristic_schedule(
                     continue
 
                 label_repeats = labels_by_person[person_index][labels[occurrence_index]]
+                daily_load = daily_loads[person_index][occurrence.weekday]
+                section_repeats = sections_by_person[person_index][sections[occurrence_index]]
                 history_cost = history_costs[(occurrence_index, person_index)]
                 candidates.append((
                     0 if loads[person_index] < minimums[person_index] else 1,
                     loads[person_index],
+                    daily_load,
+                    section_repeats,
                     label_repeats,
                     history_cost,
                     rng.random(),
@@ -173,7 +201,9 @@ def _heuristic_schedule(
             assignments[occurrence_index] = person_index
             assigned_by_person[person_index].add(occurrence_index)
             loads[person_index] += 1
+            daily_loads[person_index][occurrence.weekday] += 1
             labels_by_person[person_index][labels[occurrence_index]] += 1
+            sections_by_person[person_index][sections[occurrence_index]] += 1
             unassigned.remove(occurrence_index)
             for available_person in remaining_domains[occurrence_index]:
                 remaining_by_person[available_person] -= 1
@@ -191,12 +221,24 @@ def _heuristic_schedule(
             for counts in labels_by_person
             for count in counts.values()
         )
+        daily_repeat_cost = sum(
+            count * (count - 1) // 2
+            for counts in daily_loads
+            for count in counts.values()
+        )
+        section_repeat_cost = sum(
+            count * (count - 1) // 2
+            for counts in sections_by_person
+            for count in counts.values()
+        )
         history_cost = sum(
             recent_loads[people[assignments[index]].name] * (occurrence_count + 1)
             + repeated_chores[(occurrences[index].chore_name, people[assignments[index]].name)] * 10
             for index in range(occurrence_count)
         )
         score = (max(loads) - min(loads)) * workload_weight
+        score += daily_repeat_cost * day_repeat_weight
+        score += section_repeat_cost * section_repeat_weight
         score += label_repeat_cost * label_repeat_weight + history_cost
         if best_score is None or score < best_score:
             best_score = score
@@ -206,7 +248,7 @@ def _heuristic_schedule(
         return None
     return Schedule(
         assignments=tuple(
-            Assignment(occurrences[index], people[person_index].name)
+            Assignment(occurrences[index], people[person_index].name, people[person_index].person_id)
             for index, person_index in enumerate(best_assignments)
         ),
         seed=seed,
@@ -237,12 +279,12 @@ def generate_schedule(
         key=lambda item: (
             item.weekday.order,
             item.time_range.start_minute if item.time_range else -1,
-            item.time_label.casefold(),
+            item.section_name.casefold(),
             item.chore_name.casefold(),
         ),
     )
     occurrence_keys = [
-        (item.chore_name.casefold(), item.weekday, item.time_label.casefold(), item.time_range)
+        (item.chore_name.casefold(), item.weekday, item.section_name.casefold(), item.time_range)
         for item in occurrences
     ]
     if len(set(occurrence_keys)) != len(occurrence_keys):
@@ -269,9 +311,9 @@ def generate_schedule(
         ]
         if not eligible_people:
             time_description = (
-                f"{occurrence.time_label}, {occurrence.time_range}"
+                f"{occurrence.section_name}, {occurrence.time_range}"
                 if occurrence.time_range is not None
-                else occurrence.time_label
+                else occurrence.section_name
             )
             raise InfeasibleScheduleError(
                 f"No available person for {occurrence.chore_name} on "
@@ -324,10 +366,12 @@ def generate_schedule(
 
     label_day_groups: dict[tuple[Weekday, str], list[int]] = {}
     label_groups: dict[str, list[int]] = {}
+    section_groups: dict[int | str, list[int]] = {}
     for occurrence_index, occurrence in enumerate(occurrences):
         label = (occurrence.chore_label or occurrence.chore_name).casefold()
         label_day_groups.setdefault((occurrence.weekday, label), []).append(occurrence_index)
         label_groups.setdefault(label, []).append(occurrence_index)
+        section_groups.setdefault(_section_key(occurrence), []).append(occurrence_index)
 
     for occurrence_indices in label_day_groups.values():
         for first_index, second_index in combinations(occurrence_indices, 2):
@@ -349,6 +393,37 @@ def generate_schedule(
                 model.add(repeated <= second_assignment)
                 model.add(repeated >= first_assignment + second_assignment - 1)
                 label_repeat_variables.append(repeated)
+
+    section_repeat_variables = []
+    for occurrence_indices in section_groups.values():
+        for first_index, second_index in combinations(occurrence_indices, 2):
+            for person_index in sorted(set(eligibility[first_index]) & set(eligibility[second_index])):
+                repeated = model.new_bool_var(
+                    f"section_repeat_{first_index}_{second_index}_person_{person_index}"
+                )
+                first_assignment = assigned[(first_index, person_index)]
+                second_assignment = assigned[(second_index, person_index)]
+                model.add(repeated <= first_assignment)
+                model.add(repeated <= second_assignment)
+                model.add(repeated >= first_assignment + second_assignment - 1)
+                section_repeat_variables.append(repeated)
+
+    day_repeat_variables = []
+    day_groups: dict[Weekday, list[int]] = {}
+    for occurrence_index, occurrence in enumerate(occurrences):
+        day_groups.setdefault(occurrence.weekday, []).append(occurrence_index)
+    for occurrence_indices in day_groups.values():
+        for first_index, second_index in combinations(occurrence_indices, 2):
+            for person_index in sorted(set(eligibility[first_index]) & set(eligibility[second_index])):
+                repeated = model.new_bool_var(
+                    f"day_repeat_{first_index}_{second_index}_person_{person_index}"
+                )
+                first_assignment = assigned[(first_index, person_index)]
+                second_assignment = assigned[(second_index, person_index)]
+                model.add(repeated <= first_assignment)
+                model.add(repeated <= second_assignment)
+                model.add(repeated >= first_assignment + second_assignment - 1)
+                day_repeat_variables.append(repeated)
 
     loads = []
     for person_index, person in enumerate(people):
@@ -404,9 +479,24 @@ def generate_schedule(
         for occurrence_index, eligible_people in eligibility.items()
     )
     label_repeat_weight = history_bound + 1
-    workload_weight = len(label_repeat_variables) * label_repeat_weight + history_bound + 1
+    section_repeat_weight = len(label_repeat_variables) * label_repeat_weight + history_bound + 1
+    day_repeat_weight = (
+        len(section_repeat_variables) * section_repeat_weight
+        + len(label_repeat_variables) * label_repeat_weight
+        + history_bound
+        + 1
+    )
+    workload_weight = (
+        len(day_repeat_variables) * day_repeat_weight
+        + len(section_repeat_variables) * section_repeat_weight
+        + len(label_repeat_variables) * label_repeat_weight
+        + history_bound
+        + 1
+    )
     model.minimize(
         (max_load - min_load) * workload_weight
+        + sum(day_repeat_variables) * day_repeat_weight
+        + sum(section_repeat_variables) * section_repeat_weight
         + sum(label_repeat_variables) * label_repeat_weight
         + sum(
             history_costs[(occurrence_index, person_index)] * variable
@@ -435,6 +525,13 @@ def generate_schedule(
                     if solver.boolean_value(assigned[(occurrence_index, person_index)])
                 )
             ].name,
+                person_id=people[
+                    next(
+                        person_index
+                        for person_index in eligibility[occurrence_index]
+                        if solver.boolean_value(assigned[(occurrence_index, person_index)])
+                    )
+                ].person_id,
         )
         for occurrence_index, occurrence in enumerate(occurrences)
     )
