@@ -97,6 +97,34 @@ def test_api_generates_lists_and_exports_saved_schedules(tmp_path, monkeypatch):
     assert "Dishes" not in csv_response.text
 
 
+def test_api_explains_why_schedule_generation_failed(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHORE_CHART_DB", str(tmp_path / "infeasible.sqlite3"))
+    client = TestClient(app)
+    client.post("/api/people", json={"name": "Alex"})
+    section = client.post("/api/sections", json={"name": "Kitchen"}).json()
+    for chore_name, time_range in (
+        ("Dishes", "09:00-10:00"),
+        ("Laundry", "09:30-10:30"),
+    ):
+        client.post(
+            "/api/chores",
+            json={
+                "name": chore_name,
+                "section_id": section["section_id"],
+                "occurrences": [{"weekday": "Monday", "time_range": time_range}],
+            },
+        )
+
+    response = client.post("/api/schedules/generate", json={})
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "Dishes" in detail
+    assert "Laundry" in detail
+    assert "09:00-10:00" in detail
+    assert "09:30-10:30" in detail
+
+
 def test_api_returns_client_errors_for_invalid_configuration(tmp_path, monkeypatch):
     monkeypatch.setenv("CHORE_CHART_DB", str(tmp_path / "errors.sqlite3"))
     client = TestClient(app)

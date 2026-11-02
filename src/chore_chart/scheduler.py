@@ -31,6 +31,96 @@ def _section_key(occurrence: ChoreOccurrence) -> int | str:
     return occurrence.section_id if occurrence.section_id is not None else occurrence.section_name.casefold()
 
 
+def _schedule_failure_details(
+    people: Sequence[Person],
+    occurrences: Sequence[ChoreOccurrence],
+    eligibility: dict[int, list[int]],
+    rules: dict[str, AssignmentRule],
+) -> str:
+    details = [
+        f"Problem size: {len(people)} people, {len(occurrences)} chore occurrences, "
+        f"{sum(len(candidates) for candidates in eligibility.values())} eligible assignments."
+    ]
+    minimum_total = sum(rules.get(person.name, AssignmentRule(person.name)).minimum for person in people)
+    maximum_total = sum(
+        rule.maximum if (rule := rules.get(person.name)) is not None and rule.maximum is not None
+        else len(occurrences)
+        for person in people
+    )
+    if minimum_total > len(occurrences):
+        details.append(
+            f"Assignment minimums require {minimum_total} chores, but only "
+            f"{len(occurrences)} occurrences exist."
+        )
+    if maximum_total < len(occurrences):
+        details.append(
+            f"Assignment maximums allow {maximum_total} chores, but all "
+            f"{len(occurrences)} occurrences must be assigned."
+        )
+
+    for person_index, person in enumerate(people):
+        rule = rules.get(person.name)
+        if rule is not None and (rule.minimum or rule.maximum is not None):
+            eligible_count = sum(
+                person_index in candidates for candidates in eligibility.values()
+            )
+            maximum = str(rule.maximum) if rule.maximum is not None else "unlimited"
+            details.append(
+                f"{person.name}'s assignment rule is minimum {rule.minimum}, maximum {maximum}; "
+                f"they are eligible for {eligible_count} occurrences."
+            )
+
+    conflict_count = 0
+    for first_index, second_index in combinations(range(len(occurrences)), 2):
+        first = occurrences[first_index]
+        second = occurrences[second_index]
+        timed_overlap = (
+            first.weekday == second.weekday
+            and first.time_range is not None
+            and second.time_range is not None
+            and first.time_range.overlap_minutes(second.time_range) > 0
+        )
+        same_day_label = (
+            first.weekday == second.weekday
+            and (first.chore_label or first.chore_name).casefold()
+            == (second.chore_label or second.chore_name).casefold()
+        )
+        if not timed_overlap and not same_day_label:
+            continue
+
+        shared_people = set(eligibility[first_index]) & set(eligibility[second_index])
+        if not shared_people:
+            continue
+        conflict_count += 1
+        if conflict_count > 8:
+            continue
+        reasons = []
+        if timed_overlap:
+            reasons.append("their time ranges overlap")
+        if same_day_label:
+            reasons.append("they share a chore label on the same day")
+        eligible_names = ", ".join(people[index].name for index in sorted(shared_people))
+        if len(shared_people) == 1:
+            shared_detail = f"{eligible_names} is the only shared eligible person"
+        else:
+            shared_detail = f"the shared eligible people are {eligible_names}"
+        first_time = f", {first.time_range}" if first.time_range is not None else ""
+        second_time = f", {second.time_range}" if second.time_range is not None else ""
+        details.append(
+            f"Conflict: {first.chore_name} ({first.weekday.value}{first_time}) and "
+            f"{second.chore_name} ({second.weekday.value}{second_time}) cannot be assigned "
+            f"to the same person because {', and '.join(reasons)}; {shared_detail}."
+        )
+
+    if conflict_count > 8:
+        details.append(f"{conflict_count - 8} additional relevant conflicts were omitted.")
+    if len(details) == 1:
+        details.append(
+            "The constraints conflict in combination; no single blocking rule or chore pair was identified."
+        )
+    return "\n".join(details)
+
+
 def _heuristic_schedule(
     people: Sequence[Person],
     occurrences: Sequence[ChoreOccurrence],
@@ -369,8 +459,10 @@ def generate_schedule(
     assignment_variable_count = sum(len(candidates) for candidates in eligibility.values())
     if len(occurrences) > 120 or assignment_variable_count > 6000:
         raise ScheduleSearchLimitError(
-            "The bounded scheduler could not find a valid assignment for this large problem. "
-            "Review busy times, rules, or reduce the number of occurrences."
+            "The scheduler could not determine a valid assignment within its size limits: "
+            f"{len(occurrences)} occurrences (limit 120) and {assignment_variable_count} "
+            "eligible person-occurrence choices (limit 6000). This does not prove that no "
+            "schedule exists. Reduce the problem size or narrow eligibility with busy times."
         )
 
     model = cp_model.CpModel()
@@ -600,10 +692,21 @@ def generate_schedule(
     solver.parameters.num_search_workers = 8
     solver.parameters.max_time_in_seconds = 8.0
     result = solver.solve(model)
-    if result not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+    if result == cp_model.INFEASIBLE:
         raise InfeasibleScheduleError(
-            "No schedule satisfies everyone's busy times and assignment-count rules. "
-            "Review busy times, minimums, and maximums."
+            "No schedule satisfies everyone's busy times and assignment-count rules.\n"
+            + _schedule_failure_details(people, occurrences, eligibility, rule_by_person)
+        )
+    if result == cp_model.UNKNOWN:
+        raise ScheduleSearchLimitError(
+            "The scheduler did not find a schedule within its 8-second search limit, "
+            "but it could not prove that the configuration is infeasible. Try simplifying "
+            "the schedule or narrowing eligibility with busy times."
+        )
+    if result not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        raise ScheduleSearchLimitError(
+            f"The scheduler stopped with solver status {solver.status_name(result)}. "
+            "No schedule was created; review the schedule configuration and try again."
         )
 
     assignments = tuple(
