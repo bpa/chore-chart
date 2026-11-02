@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from io import StringIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +18,20 @@ from chore_chart.storage import SQLiteRepository
 
 class PersonCreate(BaseModel):
     name: str
+
+
+class PersonCellStylePayload(BaseModel):
+    cell_color: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
+    cell_color_mid: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    cell_color_end: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
+    cell_fill: Literal[
+        "solid",
+        "linear-horizontal",
+        "linear-vertical",
+        "linear-diagonal-down",
+        "linear-diagonal-up",
+        "radial",
+    ]
 
 
 class OccurrencePayload(BaseModel):
@@ -81,6 +95,10 @@ def _serialize_person(person: Any) -> dict[str, Any]:
     return {
         "person_id": person.person_id,
         "name": person.name,
+        "cell_color": person.cell_color,
+        "cell_color_mid": person.cell_color_mid,
+        "cell_color_end": person.cell_color_end,
+        "cell_fill": person.cell_fill,
         "busy_times": [
             {"weekday": block.weekday.value, "time_range": str(block.time_range), "label": block.label}
             for block in sorted(
@@ -167,6 +185,30 @@ def create_person(payload: PersonCreate) -> dict[str, str]:
         return {"name": person.name}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        repository.close()
+
+
+@app.put("/api/people/{person_id}/cell-style")
+def update_person_cell_style(
+    person_id: int,
+    payload: PersonCellStylePayload,
+) -> dict[str, Any]:
+    repository = get_repository()
+    try:
+        repository.set_person_cell_style(
+            person_id,
+            payload.cell_color,
+            payload.cell_color_end,
+            payload.cell_fill,
+            payload.cell_color_mid,
+        )
+        person = next(
+            person for person in repository.list_people() if person.person_id == person_id
+        )
+        return _serialize_person(person)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         repository.close()
 

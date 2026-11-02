@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import './App.css'
 
 const API_BASE = '/api'
@@ -9,6 +9,12 @@ const TABS = [
   { id: 'limits', label: 'Limits' },
   { id: 'charts', label: 'Charts' },
 ]
+const LINEAR_GRADIENTS = {
+  'linear-horizontal': { x1: '0%', y1: '0%', x2: '100%', y2: '0%' },
+  'linear-vertical': { x1: '0%', y1: '0%', x2: '0%', y2: '100%' },
+  'linear-diagonal-down': { x1: '0%', y1: '0%', x2: '100%', y2: '100%' },
+  'linear-diagonal-up': { x1: '0%', y1: '100%', x2: '100%', y2: '0%' },
+}
 
 async function request(path, options) {
   const response = await fetch(`${API_BASE}${path}`, options)
@@ -111,6 +117,31 @@ function DayPicker({ selectedDays, onChange }) {
   )
 }
 
+function PersonCell({ person }) {
+  const gradientId = `person-cell-gradient-${useId().replaceAll(':', '')}`
+  const isLinear = Object.hasOwn(LINEAR_GRADIENTS, person.cell_fill)
+  const isGradient = isLinear || person.cell_fill === 'radial'
+  const fill = isGradient ? `url(#${gradientId})` : person.cell_color
+
+  return (
+    <span className="person-cell">
+      <svg aria-hidden="true" preserveAspectRatio="none" viewBox="0 0 120 36">
+        {isGradient && <defs>
+          {isLinear
+            ? <linearGradient id={gradientId} {...LINEAR_GRADIENTS[person.cell_fill]}>
+              <stop offset="0%" stopColor={person.cell_color} />
+              {person.cell_color_mid && <stop offset="50%" stopColor={person.cell_color_mid} />}
+              <stop offset="100%" stopColor={person.cell_color_end} />
+            </linearGradient>
+            : <radialGradient id={gradientId} cx="50%" cy="50%" r="85%"><stop offset="0%" stopColor={person.cell_color} /><stop offset="100%" stopColor={person.cell_color_end} /></radialGradient>}
+        </defs>}
+        <rect height="36" width="120" fill={fill} />
+      </svg>
+      <span>{person.name}</span>
+    </span>
+  )
+}
+
 function ScheduleBlocks({ blocks, onChange }) {
   const updateBlock = (id, updates) => onChange(
     blocks.map((block) => block.id === id ? { ...block, ...updates } : block),
@@ -184,6 +215,8 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [activeTab, setActiveTab] = useState('charts')
   const [personName, setPersonName] = useState('')
+  const [stylePersonId, setStylePersonId] = useState(null)
+  const [styleDraft, setStyleDraft] = useState({ cell_color: '#e7f1ec', cell_color_mid: null, cell_color_end: '#dce8f1', cell_fill: 'solid' })
   const [choreName, setChoreName] = useState('')
   const [choreLabel, setChoreLabel] = useState('')
   const [sectionName, setSectionName] = useState('')
@@ -313,6 +346,29 @@ function App() {
   const openBusyTimes = (person) => {
     setBusyTimesPerson(person.name)
     setBusyTimes(person.busy_times)
+  }
+
+  const openPersonStyle = (person) => {
+    setStylePersonId(person.person_id)
+    setStyleDraft({
+      cell_color: person.cell_color,
+      cell_color_mid: person.cell_color_mid,
+      cell_color_end: person.cell_color_end,
+      cell_fill: person.cell_fill,
+    })
+  }
+
+  const savePersonStyle = (event, person) => {
+    event.preventDefault()
+    run(async () => {
+      await request(`/people/${person.person_id}/cell-style`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(styleDraft),
+      })
+      setStylePersonId(null)
+      await refresh()
+      setMessage(`Updated printed cell for ${person.name}`)
+    })
   }
 
   const addBusyTime = () => {
@@ -464,10 +520,26 @@ function App() {
           </form>
         </div>
         {people.length ? <ul className="people-list">{people.map((person) => (
-          <li key={person.person_id}>
-            <span className="person-mark">{person.name.slice(0, 1).toUpperCase()}</span>
-            <span className="person-name">{person.name}</span>
-            <button className="text-button" type="button" onClick={() => openBusyTimes(person)}>{busyTimesPerson === person.name ? 'Editing busy times' : 'Busy times'}</button>
+          <li className="person-item" key={person.person_id}>
+            <div className="person-row">
+              <PersonCell person={person} />
+              <span className="person-name">{person.name}</span>
+              <button className="text-button" type="button" onClick={() => openPersonStyle(person)}>{stylePersonId === person.person_id ? 'Editing style' : 'Cell style'}</button>
+              <button className="text-button" type="button" onClick={() => openBusyTimes(person)}>{busyTimesPerson === person.name ? 'Editing busy times' : 'Busy times'}</button>
+            </div>
+            {stylePersonId === person.person_id && <form className="editor person-style-editor" onSubmit={(event) => savePersonStyle(event, person)}>
+              <div className="person-style-preview"><PersonCell person={{ ...person, ...styleDraft }} /></div>
+              <label className="field-label"><span>Fill</span><select aria-label={`${person.name} cell fill`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_fill: event.target.value })} value={styleDraft.cell_fill}>
+                <option value="solid">Solid</option><option value="linear-horizontal">Linear: horizontal</option><option value="linear-vertical">Linear: vertical</option><option value="linear-diagonal-down">Linear: diagonal down</option><option value="linear-diagonal-up">Linear: diagonal up</option><option value="radial">Radial gradient</option>
+              </select></label>
+              <label className="field-label"><span>{styleDraft.cell_fill === 'solid' ? 'Background' : 'Start color'}</span><input aria-label={`${person.name} cell start color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color: event.target.value })} type="color" value={styleDraft.cell_color} /></label>
+              {styleDraft.cell_fill !== 'solid' && <label className="field-label"><span>End color</span><input aria-label={`${person.name} cell end color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_end: event.target.value })} type="color" value={styleDraft.cell_color_end} /></label>}
+              {styleDraft.cell_fill.startsWith('linear-') && <label className="field-label midpoint-color">
+                <span><input aria-label={`${person.name} add middle color`} checked={Boolean(styleDraft.cell_color_mid)} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_mid: event.target.checked ? '#b7c9dc' : null })} type="checkbox" />Middle color</span>
+                {styleDraft.cell_color_mid && <input aria-label={`${person.name} cell middle color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_mid: event.target.value })} type="color" value={styleDraft.cell_color_mid} />}
+              </label>}
+              <div className="person-style-actions"><button className="save-button" type="submit" disabled={busy}>Save style</button><button className="text-button" type="button" onClick={() => setStylePersonId(null)}>Cancel</button></div>
+            </form>}
           </li>
         ))}</ul> : <p className="empty-note">No people yet.</p>}
         {busyTimesPerson && <form className="editor busy-times-editor" onSubmit={saveBusyTimes}>
@@ -618,7 +690,11 @@ function App() {
               <tr className="print-group"><th scope="rowgroup" colSpan={WEEKDAYS.length + 1}>{group.label}</th></tr>
               {group.rows.map((row) => <tr key={row.choreId}>
                 <th scope="row">{row.label}</th>
-                {WEEKDAYS.map((weekday) => <td key={weekday}>{row.peopleByWeekday[weekday] ?? ''}</td>)}
+                {WEEKDAYS.map((weekday) => {
+                  const personName = row.peopleByWeekday[weekday]
+                  const person = people.find((item) => item.name === personName)
+                  return <td key={weekday}>{personName && <PersonCell person={person ?? { name: personName, cell_color: '#e7f1ec', cell_color_mid: null, cell_color_end: '#dce8f1', cell_fill: 'solid' }} />}</td>
+                })}
               </tr>)}
             </tbody>)}
           </table>

@@ -9,7 +9,21 @@ def test_api_manages_people_busy_times_rules_and_chores(tmp_path, monkeypatch):
 
     assert client.get("/api/health").json() == {"status": "ok"}
     assert client.post("/api/people", json={"name": "Alex"}).status_code == 200
-    assert client.get("/api/people").json()[0]["busy_times"] == []
+    listed_person = client.get("/api/people").json()[0]
+    assert listed_person["busy_times"] == []
+    assert listed_person["cell_color"] == "#e7f1ec"
+    assert listed_person["cell_color_mid"] is None
+    assert listed_person["cell_color_end"] == "#dce8f1"
+    assert listed_person["cell_fill"] == "solid"
+    person_id = listed_person["person_id"]
+    updated_style = client.put(
+        f"/api/people/{person_id}/cell-style",
+        json={"cell_color": "#f2c94c", "cell_color_mid": "#b7c9dc", "cell_color_end": "#ef8b67", "cell_fill": "linear-diagonal-up"},
+    )
+    assert updated_style.json()["cell_color"] == "#f2c94c"
+    assert updated_style.json()["cell_color_mid"] == "#b7c9dc"
+    assert updated_style.json()["cell_color_end"] == "#ef8b67"
+    assert updated_style.json()["cell_fill"] == "linear-diagonal-up"
     assert client.put(
         "/api/people/Alex/busy-times",
         json={"blocks": [{"weekday": "Monday", "time_range": "09:00-12:00", "label": "Work"}]},

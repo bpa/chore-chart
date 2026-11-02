@@ -159,6 +159,10 @@ class Person:
     name: str
     busy_times: frozenset[BusyBlock] = field(default_factory=frozenset)
     person_id: int | None = None
+    cell_color: str = "#e7f1ec"
+    cell_color_mid: str | None = None
+    cell_color_end: str = "#dce8f1"
+    cell_fill: str = "solid"
 
     def __post_init__(self) -> None:
         name = self.name.strip()

@@ -36,6 +36,10 @@ class PersonRecord(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120), unique=True)
+    cell_color: Mapped[str] = mapped_column(String(7), default="#e7f1ec")
+    cell_color_mid: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    cell_color_end: Mapped[str] = mapped_column(String(7), default="#dce8f1")
+    cell_fill: Mapped[str] = mapped_column(String(8), default="solid")
 
 
 class BusyTimeRecord(Base):
@@ -132,6 +136,26 @@ class SQLiteRepository:
     def _upgrade_schema(self) -> None:
         with self._engine.begin() as connection:
             tables = set(inspect(connection).get_table_names())
+            if "people" in tables:
+                people_columns = {
+                    column["name"] for column in inspect(connection).get_columns("people")
+                }
+                if "cell_color" not in people_columns:
+                    connection.exec_driver_sql(
+                        "ALTER TABLE people ADD COLUMN cell_color VARCHAR(7) NOT NULL DEFAULT '#e7f1ec'"
+                    )
+                if "cell_color_end" not in people_columns:
+                    connection.exec_driver_sql(
+                        "ALTER TABLE people ADD COLUMN cell_color_end VARCHAR(7) NOT NULL DEFAULT '#dce8f1'"
+                    )
+                if "cell_color_mid" not in people_columns:
+                    connection.exec_driver_sql(
+                        "ALTER TABLE people ADD COLUMN cell_color_mid VARCHAR(7)"
+                    )
+                if "cell_fill" not in people_columns:
+                    connection.exec_driver_sql(
+                        "ALTER TABLE people ADD COLUMN cell_fill VARCHAR(8) NOT NULL DEFAULT 'solid'"
+                    )
             if "chores" not in tables:
                 return
 
@@ -462,9 +486,30 @@ class SQLiteRepository:
                 name=record.name,
                 person_id=record.id,
                 busy_times=frozenset(busy_by_person.get(record.id, set())),
+                cell_color=record.cell_color,
+                cell_color_mid=record.cell_color_mid,
+                cell_color_end=record.cell_color_end,
+                cell_fill=record.cell_fill,
             )
             for record in records
         ]
+
+    def set_person_cell_style(
+        self,
+        person_id: int,
+        cell_color: str,
+        cell_color_end: str,
+        cell_fill: str,
+        cell_color_mid: str | None,
+    ) -> None:
+        with self._sessions.begin() as session:
+            person = session.get(PersonRecord, person_id)
+            if person is None:
+                raise ValueError(f"Unknown person {person_id}.")
+            person.cell_color = cell_color
+            person.cell_color_mid = cell_color_mid
+            person.cell_color_end = cell_color_end
+            person.cell_fill = cell_fill
 
     def set_busy_times(self, person_name: str, blocks: Iterable[BusyBlock]) -> None:
         normalized_blocks = set(blocks)

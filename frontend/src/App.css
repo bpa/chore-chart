@@ -20,9 +20,18 @@ input::placeholder { color: #9a9d95; }
 .icon-button,.close-button,.remove-button { flex: 0 0 auto; border: 0; cursor: pointer; font: inherit; }
 .add-button { width: 38px; border-radius: 3px; color: #fff; background: var(--green); font-size: 22px; line-height: 1; }
 .people-list,.chore-list,.queued-occurrences { list-style: none; margin: 13px 0 0; padding: 0; }
-.people-list li { min-height: 42px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line-soft); }
-.person-mark { width: 25px; height: 25px; display: grid; place-items: center; color: var(--green); background: #e7f1ec; border-radius: 50%; font-size: 11px; font-weight: 700; }
+.people-list li { border-bottom: 1px solid var(--line-soft); }
+.person-row { min-height: 52px; display: flex; align-items: center; gap: 10px; }
+.person-cell { position: relative; display: grid; width: 96px; min-height: 32px; flex: 0 0 auto; place-items: center; overflow: hidden; color: var(--ink); font-size: 10px; font-weight: 600; }
+.person-cell svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.person-cell > span { position: relative; max-width: 100%; overflow: hidden; padding: 2px 4px; text-overflow: ellipsis; white-space: nowrap; }
 .person-name { flex: 1; color: var(--ink); font-size: 13px; }
+.person-style-editor { display: grid; grid-template-columns: minmax(120px, 1fr) repeat(3, minmax(110px, .7fr)); align-items: end; gap: 10px; margin: 0 0 12px; }
+.person-style-preview .person-cell { width: 100%; min-height: 42px; font-size: 12px; }
+.person-style-editor input[type="color"] { width: 100%; height: 36px; padding: 3px; cursor: pointer; }
+.person-style-editor .midpoint-color > span { align-items: center; }
+.person-style-editor input[type="checkbox"] { width: auto; height: auto; margin: 0; padding: 0; accent-color: var(--green); }
+.person-style-actions { display: flex; align-items: center; grid-column: 1 / -1; gap: 8px; }
 .text-button { border: 0; padding: 5px 0 5px 8px; color: var(--green); background: transparent; cursor: pointer; font: 600 11px var(--sans); }
 .empty-note { color: var(--muted); font-size: 12px; }
 .editor { margin-top: 12px; padding: 12px; border: 1px solid var(--line); background: #fbfaf6; }
@@ -169,6 +178,10 @@ input::placeholder { color: #9a9d95; }
   .assignment-chore { grid-column: 2; grid-row: 1; font-size: 11px; }
   .assignment-time { grid-row: 1 / span 2; align-self: start; padding-top: 2px; }
   .settings-column { display: block; }
+  .person-row { flex-wrap: wrap; gap: 6px 9px; padding: 8px 0; }
+  .person-row .person-cell { width: 74px; }
+  .person-style-editor { grid-template-columns: 1fr 1fr; }
+  .person-style-preview,.person-style-actions { grid-column: 1 / -1; }
   .tabs { overflow-x: auto; }
   .tab { min-width: 72px; padding-inline: 10px; }
   .panel-heading { align-items: flex-start; flex-direction: column; }
@@ -190,13 +203,15 @@ input::placeholder { color: #9a9d95; }
   .layout { display: block; padding: 0; }
   .tab-panel:not(.charts-panel) { display: none !important; }
   .print-schedule { display: block; width: 100%; break-inside: avoid; page-break-inside: avoid; }
-  .chart-table { width: 100%; height: calc(100vh - 16mm); border-collapse: collapse; table-layout: auto; font-size: 7pt; line-height: 1.1; }
+  .chart-table { width: 100%; height: calc(100vh - 16mm); border-collapse: collapse; border-spacing: 0; table-layout: auto; font-size: 7pt; line-height: 1.1; }
   .print-chore-column { width: 16%; }
   .print-day-column { width: 12%; }
-  .chart-table th,.chart-table td { height: 5mm; border: 1px solid #aeb8b0; padding: 1mm; text-align: center; white-space: nowrap; }
+  .chart-table th,.chart-table td { border: 1px solid #000; padding: 0; text-align: center; white-space: nowrap; }
   .chart-table thead th { background: #e7eee9 !important; font-weight: 700; }
   .chart-table th:first-child { width: 16%; text-align: left; }
-  .chart-table tbody .print-group th { height: 5mm; background: #f0f2ee !important; text-align: center; font-size: 7pt; }
+  .chart-table tbody .print-group th { background: #f0f2ee !important; text-align: center; font-size: 7pt; }
   .chart-table small { margin-left: 1mm; color: #5e6862; font-size: 6pt; font-weight: 400; }
   .chart-table tbody td { color: #245b49; }
+  .person-cell { width: 100%; height: 100%; min-height: 0; color: #202c29 !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .person-cell > span { overflow: visible; padding: 0 4px; text-overflow: clip; }
 }
