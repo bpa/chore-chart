@@ -198,6 +198,61 @@ def test_daily_workload_is_spread_when_weekly_totals_are_already_balanced():
         } == {"Alex", "Sam"}
 
 
+def test_weekly_and_daily_workloads_follow_chore_availability():
+    monday_occurrences = [
+        make_occurrence(
+            f"monday_chore_{index}",
+            Weekday.MONDAY,
+            time_range=TimeRange(index * 60, (index + 1) * 60),
+        )
+        for index in range(6)
+    ]
+    tuesday_occurrences = [
+        make_occurrence(
+            f"tuesday_chore_{index}",
+            Weekday.TUESDAY,
+            time_range=TimeRange(index * 60, (index + 1) * 60),
+        )
+        for index in range(6)
+    ]
+    occurrences = monday_occurrences + tuesday_occurrences
+    alex = Person(
+        "Alex",
+        frozenset(
+            BusyBlock(Weekday.MONDAY, occurrence.time_range)
+            for occurrence in monday_occurrences[3:]
+        ),
+    )
+    sam = Person("Sam")
+    chores = [Chore(occurrence.chore_name, (occurrence,)) for occurrence in occurrences]
+
+    schedule = generate_schedule([alex, sam], chores, seed=23)
+
+    assert {
+        name: sum(item.person_name == name for item in schedule.assignments)
+        for name in ("Alex", "Sam")
+    } == {"Alex": 5, "Sam": 7}
+    assert {
+        item.person_name
+        for item in schedule.assignments
+        if item.occurrence.weekday == Weekday.MONDAY
+    } == {"Alex", "Sam"}
+    assert {
+        name: sum(
+            item.person_name == name and item.occurrence.weekday == Weekday.MONDAY
+            for item in schedule.assignments
+        )
+        for name in ("Alex", "Sam")
+    } == {"Alex": 2, "Sam": 4}
+    assert {
+        name: sum(
+            item.person_name == name and item.occurrence.weekday == Weekday.TUESDAY
+            for item in schedule.assignments
+        )
+        for name in ("Alex", "Sam")
+    } == {"Alex": 3, "Sam": 3}
+
+
 def test_large_schedule_completes_within_thirty_seconds():
     people = [
         Person(

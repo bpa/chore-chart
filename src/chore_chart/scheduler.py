@@ -49,6 +49,18 @@ def _heuristic_schedule(
     for occurrence_index, occurrence in enumerate(occurrences):
         day_groups.setdefault(occurrence.weekday, []).append(occurrence_index)
 
+    eligible_counts = [
+        sum(person_index in candidates for candidates in eligibility.values())
+        for person_index in range(person_count)
+    ]
+    daily_eligible_counts = {
+        weekday: [
+            sum(person_index in eligibility[index] for index in day_occurrences)
+            for person_index in range(person_count)
+        ]
+        for weekday, day_occurrences in day_groups.items()
+    }
+
     degrees = [0] * occurrence_count
     for day_occurrences in day_groups.values():
         for first_index, second_index in combinations(day_occurrences, 2):
@@ -91,6 +103,11 @@ def _heuristic_schedule(
     section_repeat_bound = sum(size * (size - 1) // 2 for size in section_sizes.values())
     day_sizes = Counter(item.weekday for item in occurrences)
     day_repeat_bound = sum(size * (size - 1) // 2 for size in day_sizes.values())
+    daily_balance_bound = sum(
+        len(day_occurrences) * max(first_count, second_count)
+        for weekday, day_occurrences in day_groups.items()
+        for first_count, second_count in combinations(daily_eligible_counts[weekday], 2)
+    )
     label_repeat_weight = history_bound + 1
     section_repeat_weight = label_repeat_bound * label_repeat_weight + history_bound + 1
     day_repeat_weight = (
@@ -99,8 +116,16 @@ def _heuristic_schedule(
         + history_bound
         + 1
     )
-    workload_weight = (
+    daily_balance_weight = (
         day_repeat_bound * day_repeat_weight
+        + section_repeat_bound * section_repeat_weight
+        + label_repeat_bound * label_repeat_weight
+        + history_bound
+        + 1
+    )
+    workload_weight = (
+        daily_balance_bound * daily_balance_weight
+        + day_repeat_bound * day_repeat_weight
         + section_repeat_bound * section_repeat_weight
         + label_repeat_bound * label_repeat_weight
         + history_bound
@@ -185,8 +210,8 @@ def _heuristic_schedule(
                 history_cost = history_costs[(occurrence_index, person_index)]
                 candidates.append((
                     0 if loads[person_index] < minimums[person_index] else 1,
-                    loads[person_index],
-                    daily_load,
+                    loads[person_index] / max(1, eligible_counts[person_index]),
+                    daily_load / max(1, daily_eligible_counts[occurrence.weekday][person_index]),
                     section_repeats,
                     label_repeats,
                     history_cost,
@@ -236,7 +261,23 @@ def _heuristic_schedule(
             + repeated_chores[(occurrences[index].chore_name, people[assignments[index]].name)] * 10
             for index in range(occurrence_count)
         )
-        score = (max(loads) - min(loads)) * workload_weight
+        workload_balance_cost = sum(
+            abs(
+                loads[first_index] * eligible_counts[second_index]
+                - loads[second_index] * eligible_counts[first_index]
+            )
+            for first_index, second_index in combinations(range(person_count), 2)
+        )
+        daily_balance_cost = sum(
+            abs(
+                daily_loads[first_index][weekday] * daily_eligible_counts[weekday][second_index]
+                - daily_loads[second_index][weekday] * daily_eligible_counts[weekday][first_index]
+            )
+            for weekday in day_groups
+            for first_index, second_index in combinations(range(person_count), 2)
+        )
+        score = workload_balance_cost * workload_weight
+        score += daily_balance_cost * daily_balance_weight
         score += daily_repeat_cost * day_repeat_weight
         score += section_repeat_cost * section_repeat_weight
         score += label_repeat_cost * label_repeat_weight + history_cost
@@ -438,10 +479,58 @@ def generate_schedule(
             model.add(load <= rule.maximum)
         loads.append(load)
 
-    max_load = model.new_int_var(0, len(occurrences), "max_load")
-    min_load = model.new_int_var(0, len(occurrences), "min_load")
-    model.add_max_equality(max_load, loads)
-    model.add_min_equality(min_load, loads)
+    eligible_counts = [
+        sum(person_index in candidates for candidates in eligibility.values())
+        for person_index in range(len(people))
+    ]
+    workload_balance_variables = []
+    for first_index, second_index in combinations(range(len(people)), 2):
+        first_count = eligible_counts[first_index]
+        second_count = eligible_counts[second_index]
+        if not first_count or not second_count:
+            continue
+        bound = len(occurrences) * max(first_count, second_count)
+        difference = model.new_int_var(0, bound, f"workload_balance_{first_index}_{second_index}")
+        model.add_abs_equality(
+            difference,
+            loads[first_index] * second_count - loads[second_index] * first_count,
+        )
+        workload_balance_variables.append(difference)
+
+    daily_balance_variables = []
+    daily_balance_bound = 0
+    for weekday, occurrence_indices in day_groups.items():
+        daily_counts = [
+            sum(person_index in eligibility[index] for index in occurrence_indices)
+            for person_index in range(len(people))
+        ]
+        for first_index, second_index in combinations(range(len(people)), 2):
+            first_count = daily_counts[first_index]
+            second_count = daily_counts[second_index]
+            if not first_count or not second_count:
+                continue
+            first_load = sum(
+                assigned[(occurrence_index, first_index)]
+                for occurrence_index in occurrence_indices
+                if (occurrence_index, first_index) in assigned
+            )
+            second_load = sum(
+                assigned[(occurrence_index, second_index)]
+                for occurrence_index in occurrence_indices
+                if (occurrence_index, second_index) in assigned
+            )
+            bound = len(occurrence_indices) * max(first_count, second_count)
+            difference = model.new_int_var(
+                0,
+                bound,
+                f"daily_balance_{weekday.value}_{first_index}_{second_index}",
+            )
+            model.add_abs_equality(
+                difference,
+                first_load * second_count - second_load * first_count,
+            )
+            daily_balance_variables.append(difference)
+            daily_balance_bound += bound
 
     recent_loads: Counter[str] = Counter()
     repeat_counts: Counter[tuple[str, str]] = Counter()
@@ -479,15 +568,24 @@ def generate_schedule(
         + history_bound
         + 1
     )
-    workload_weight = (
+    daily_balance_weight = (
         len(day_repeat_variables) * day_repeat_weight
         + len(section_repeat_variables) * section_repeat_weight
         + len(label_repeat_variables) * label_repeat_weight
         + history_bound
         + 1
     )
+    workload_weight = (
+        daily_balance_bound * daily_balance_weight
+        + len(day_repeat_variables) * day_repeat_weight
+        + len(section_repeat_variables) * section_repeat_weight
+        + len(label_repeat_variables) * label_repeat_weight
+        + history_bound
+        + 1
+    )
     model.minimize(
-        (max_load - min_load) * workload_weight
+        sum(workload_balance_variables) * workload_weight
+        + sum(daily_balance_variables) * daily_balance_weight
         + sum(day_repeat_variables) * day_repeat_weight
         + sum(section_repeat_variables) * section_repeat_weight
         + sum(label_repeat_variables) * label_repeat_weight
