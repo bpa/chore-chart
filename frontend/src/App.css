@@ -138,6 +138,13 @@ input::placeholder { color: #9a9d95; }
 .chart-table tbody th[scope="row"] { color: var(--ink); font-size: 12px; font-weight: 600; }
 .chart-table tbody td { color: var(--green); font-size: 12px; }
 .assignment-editor { width: 100%; padding: 6px; font-size: 11px; }
+.chart-editing { overflow-x: auto; }
+.chart-table.is-editing { min-width: max-content; }
+.chart-table.is-editing thead th.tally-start,.chart-table.is-editing .row-tally.tally-start,.chart-table.is-editing tfoot .tally-start { border-left: 2px solid var(--green); }
+.chart-table.is-editing .row-tally,.chart-table.is-editing tfoot td { color: var(--ink); text-align: center; font-variant-numeric: tabular-nums; }
+.chart-table.is-editing tfoot th,.chart-table.is-editing tfoot td { background: #f3f4ef; font-size: 11px; font-weight: 600; }
+.chart-table.is-editing tfoot th { color: var(--ink); text-align: left; }
+.chart-table.is-editing tfoot .person-tally-first th,.chart-table.is-editing tfoot .person-tally-first td { border-top: 2px solid var(--green); }
 .assignment-print-name { display: none; }
 .chart-table tbody .print-group th { padding: 8px 12px; color: var(--ink-soft); background: #f0f2ee; font-size: 10px; font-weight: 700; text-align: left; }
 .chart-table small { display: block; color: var(--muted); font-size: 10px; font-weight: 400; }

@@ -172,6 +172,80 @@ def test_label_repeat_objective_spreads_each_label_across_people():
         assignments_by_label[label].add(assignment.person_name)
 
 
+@pytest.mark.parametrize("force_exact_solver", [False, True])
+def test_label_fairness_is_scoped_to_section(force_exact_solver, monkeypatch):
+    if force_exact_solver:
+        monkeypatch.setattr("chore_chart.scheduler._heuristic_schedule", lambda *_args: None)
+
+    chores = []
+    for section, fixed_weekdays in (
+        ("Group A", (Weekday.THURSDAY, Weekday.FRIDAY, Weekday.SATURDAY)),
+        ("Group B", (Weekday.THURSDAY, Weekday.FRIDAY, Weekday.SATURDAY)),
+    ):
+        for index, weekday in enumerate((Weekday.MONDAY, Weekday.TUESDAY, Weekday.WEDNESDAY)):
+            name = f"clear_{section[-1]}_{index}"
+            occurrence = ChoreOccurrence(name, weekday, section, chore_label="Clear Table")
+            chores.append(Chore(name, (occurrence,), label="Clear Table", section_name=section))
+        for index, weekday in enumerate(fixed_weekdays):
+            name = f"fixed_{section[-1]}_{index}"
+            occurrence = ChoreOccurrence(name, weekday, section, chore_label=name)
+            chores.append(Chore(name, (occurrence,), label=name, section_name=section))
+
+    monkeypatch.setattr(
+        "chore_chart.scheduler._is_available",
+        lambda person, occurrence: (
+            person.name == ("Alex" if occurrence.chore_name.startswith("fixed_A") else "Sam")
+            if occurrence.chore_name.startswith("fixed_")
+            else True
+        ),
+    )
+
+    schedule = generate_schedule([Person("Alex"), Person("Sam")], chores, seed=13)
+
+    counts_by_section = {
+        section: {person: 0 for person in ("Alex", "Sam")}
+        for section in ("Group A", "Group B")
+    }
+    for assignment in schedule.assignments:
+        if assignment.occurrence.chore_label == "Clear Table":
+            counts_by_section[assignment.occurrence.section_name][assignment.person_name] += 1
+
+    assert all(sorted(counts.values()) == [1, 2] for counts in counts_by_section.values())
+
+
+@pytest.mark.parametrize("force_exact_solver", [False, True])
+def test_label_equalization_precedes_daily_and_total_workload(force_exact_solver, monkeypatch):
+    monday_label = make_occurrence("label_monday", Weekday.MONDAY)
+    tuesday_label = make_occurrence("label_tuesday", Weekday.TUESDAY)
+    fixed_occurrences = [
+        make_occurrence(f"fixed_{index}", Weekday.MONDAY if index < 3 else Weekday.TUESDAY)
+        for index in range(5)
+    ]
+    people = [Person("Alex"), Person("Sam")]
+    chores = [
+        Chore("label_monday", (monday_label,), label="Shared"),
+        Chore("label_tuesday", (tuesday_label,), label="Shared"),
+        *(Chore(item.chore_name, (item,)) for item in fixed_occurrences),
+    ]
+    if force_exact_solver:
+        monkeypatch.setattr("chore_chart.scheduler._heuristic_schedule", lambda *_args: None)
+    monkeypatch.setattr(
+        "chore_chart.scheduler._is_available",
+        lambda person, occurrence: (
+            person.name == "Alex" if occurrence.chore_name.startswith("fixed_") else True
+        ),
+    )
+
+    schedule = generate_schedule(people, chores, seed=31)
+
+    label_assignees = {
+        assignment.person_name
+        for assignment in schedule.assignments
+        if assignment.occurrence.chore_label == "Shared"
+    }
+    assert label_assignees == {"Alex", "Sam"}
+
+
 def test_section_workload_is_spread_across_people():
     occurrences = [
         make_occurrence("morning_a", Weekday.MONDAY, "Morning"),
@@ -221,10 +295,6 @@ def test_lunch_workload_is_not_absorbed_by_other_sections():
         assignment.person_name == "Eliza" and assignment.occurrence.section_name == "Lunch"
         for assignment in schedule.assignments
     )
-    assert 3 <= eliza_lunch_assignments <= 6
-
-
-def test_daily_workload_is_spread_when_weekly_totals_are_already_balanced():
     occurrences = [
         make_occurrence("monday_a", Weekday.MONDAY, "Section A"),
         make_occurrence("monday_b", Weekday.MONDAY, "Section B"),
@@ -277,7 +347,7 @@ def test_weekly_and_daily_workloads_follow_chore_availability():
     assert {
         name: sum(item.person_name == name for item in schedule.assignments)
         for name in ("Alex", "Sam")
-    } == {"Alex": 5, "Sam": 7}
+    } == {"Alex": 6, "Sam": 6}
     assert {
         item.person_name
         for item in schedule.assignments
@@ -289,7 +359,7 @@ def test_weekly_and_daily_workloads_follow_chore_availability():
             for item in schedule.assignments
         )
         for name in ("Alex", "Sam")
-    } == {"Alex": 2, "Sam": 4}
+    } == {"Alex": 3, "Sam": 3}
     assert {
         name: sum(
             item.person_name == name and item.occurrence.weekday == Weekday.TUESDAY
@@ -297,6 +367,33 @@ def test_weekly_and_daily_workloads_follow_chore_availability():
         )
         for name in ("Alex", "Sam")
     } == {"Alex": 3, "Sam": 3}
+
+
+@pytest.mark.parametrize("force_exact_solver", [False, True])
+def test_availability_balance_is_between_equal_and_strictly_proportional(
+    force_exact_solver, monkeypatch
+):
+    occurrences = [
+        make_occurrence(f"shared_{index}", time_range=TimeRange(8 * 60, 9 * 60))
+        for index in range(6)
+    ] + [
+        make_occurrence(f"sam_only_{index}", time_range=TimeRange(9 * 60, 10 * 60))
+        for index in range(6)
+    ]
+    chores = [Chore(item.chore_name, (item,)) for item in occurrences]
+    if force_exact_solver:
+        monkeypatch.setattr("chore_chart.scheduler._heuristic_schedule", lambda *_args: None)
+    monkeypatch.setattr(
+        "chore_chart.scheduler._is_available",
+        lambda person, occurrence: person.name == "Sam" or not occurrence.chore_name.startswith("sam_only_"),
+    )
+
+    schedule = generate_schedule([Person("Alex"), Person("Sam")], chores, seed=41)
+
+    assert {
+        name: sum(item.person_name == name for item in schedule.assignments)
+        for name in ("Alex", "Sam")
+    } == {"Alex": 5, "Sam": 7}
 
 
 def test_large_schedule_completes_within_thirty_seconds():

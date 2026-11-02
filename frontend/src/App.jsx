@@ -58,6 +58,20 @@ function buildPrintGroups(assignments) {
     }))
 }
 
+function tallyAssignments(assignments, people) {
+  const tallies = Object.fromEntries(people.map((person) => [person.person_id, {
+    byWeekday: Object.fromEntries(WEEKDAYS.map((weekday) => [weekday, 0])),
+    total: 0,
+  }]))
+  assignments.forEach(({ person_id, weekday }) => {
+    const tally = tallies[person_id]
+    if (!tally || !WEEKDAYS.includes(weekday)) return
+    tally.byWeekday[weekday] += 1
+    tally.total += 1
+  })
+  return tallies
+}
+
 function makeScheduleBlock(id, start_time = '00:06', end_time = '23:00', days = WEEKDAYS) {
   return { id, days: [...days], start_time, end_time }
 }
@@ -535,6 +549,7 @@ function App() {
     return { ...assignment, person_id: personId, person: person?.name ?? assignment.person }
   })
   const printGroups = buildPrintGroups(displayedAssignments)
+  const scheduleTallies = tallyAssignments(displayedAssignments, people)
 
   return (
     <main className="workspace">
@@ -742,13 +757,15 @@ function App() {
           </select>
           {schedule && <span className="assignment-count">{schedule.assignments.length} assignments</span>}
         </div>
-        {schedule ? <div className="print-schedule">
-          <table className="chart-table" aria-label="Weekly chore chart">
+        {schedule ? <div className={`print-schedule${editingSchedule ? ' chart-editing' : ''}`}>
+          <table className={`chart-table${editingSchedule ? ' is-editing' : ''}`} aria-label="Weekly chore chart">
             <colgroup><col className="print-chore-column" />{WEEKDAYS.map((weekday) => <col className="print-day-column" key={weekday} />)}</colgroup>
-            <thead><tr><th aria-hidden="true" />{WEEKDAYS.map((weekday) => <th scope="col" key={weekday}>{weekday}</th>)}</tr></thead>
+            <thead><tr><th aria-hidden="true" />{WEEKDAYS.map((weekday) => <th scope="col" key={weekday}>{weekday}</th>)}{editingSchedule && people.map((person, index) => <th className={index === 0 ? 'tally-start' : ''} scope="col" key={person.person_id}>{person.name}</th>)}</tr></thead>
             {printGroups.map((group) => <tbody key={group.label}>
-              <tr className="print-group"><th scope="rowgroup" colSpan={WEEKDAYS.length + 1}>{group.label}</th></tr>
-              {group.rows.map((row) => <tr key={row.choreId}>
+              <tr className="print-group"><th scope="rowgroup" colSpan={WEEKDAYS.length + 1 + (editingSchedule ? people.length : 0)}>{group.label}</th></tr>
+              {group.rows.map((row) => {
+                const rowTallies = tallyAssignments(Object.values(row.peopleByWeekday), people)
+                return <tr key={row.choreId}>
                 <th scope="row">{row.label}</th>
                 {WEEKDAYS.map((weekday) => {
                   const assignment = row.peopleByWeekday[weekday]
@@ -768,8 +785,16 @@ function App() {
                     <span className="assignment-print-name">{assignment.person}</span>
                   </>}</td>
                 })}
-              </tr>)}
+                {editingSchedule && people.map((person, index) => <td className={index === 0 ? 'row-tally tally-start' : 'row-tally'} key={person.person_id}>{rowTallies[person.person_id]?.total ?? 0}</td>)}
+              </tr>})}
             </tbody>)}
+            {editingSchedule && <tfoot>
+              {people.map((person, personIndex) => <tr className={personIndex === 0 ? 'person-tally-first' : ''} key={person.person_id}>
+                <th scope="row">{person.name}</th>
+                {WEEKDAYS.map((weekday) => <td key={weekday}>{scheduleTallies[person.person_id]?.byWeekday[weekday] ?? 0}</td>)}
+                <td className="person-tally-total tally-start" colSpan={people.length}>{scheduleTallies[person.person_id]?.total ?? 0}</td>
+              </tr>)}
+            </tfoot>}
           </table>
         </div> : <div className="schedule-empty"><span className="empty-mark">+</span><h3>No chart yet</h3><p>Add people and chores, then generate a chart.</p></div>}
       </section>}
