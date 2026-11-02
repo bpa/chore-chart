@@ -53,7 +53,7 @@ def test_csv_rejects_two_assignments_for_one_matrix_cell():
         write_schedule_csv(schedule, StringIO())
 
 
-def test_csv_keeps_same_chore_and_group_ranges_in_separate_rows():
+def test_csv_keeps_same_chore_and_group_ranges_in_separate_rows_without_printing_ranges():
     schedule = Schedule(
         (
             Assignment(
@@ -81,10 +81,7 @@ def test_csv_keeps_same_chore_and_group_ranges_in_separate_rows():
     write_schedule_csv(schedule, output)
 
     rows = list(csv.reader(StringIO(output.getvalue())))
-    assert [row[0] for row in rows[1:]] == [
-        "Dinner prep (Dinner 16:00-17:00)",
-        "Dinner prep (Dinner 18:00-19:00)",
-    ]
+    assert [row[0] for row in rows[1:]] == ["Dinner prep (Dinner)", "Dinner prep (Dinner)"]
 
 
 def test_export_creates_parent_folder_and_writes_utf8_bom(tmp_path):

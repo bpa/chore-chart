@@ -37,9 +37,7 @@ function buildPrintGroups(assignments) {
       rows.set(key, {
         order: assignment.chore_order,
         choreId: assignment.chore_id,
-        chore: assignment.chore,
         label: assignment.label || assignment.chore,
-        timeRange: assignment.time_range,
         peopleByWeekday: {},
       })
     }
@@ -538,7 +536,7 @@ function App() {
 
         <div className="chore-table-wrap">
           <table className="data-table">
-            <thead><tr><th aria-hidden="true" /><th>Name</th><th>Label</th><th>Days</th><th>Time</th><th><span className="sr-only">Actions</span></th></tr></thead>
+            <thead><tr><th aria-hidden="true" /><th>Name</th><th>Label</th><th>Days</th><th><span className="sr-only">Actions</span></th></tr></thead>
             {sections.map((section) => <tbody key={section.section_id}>
               <tr
                 className="section-drop-row"
@@ -548,7 +546,7 @@ function App() {
                   if (draggedSectionId !== null) reorderSections(draggedSectionId, section.section_id)
                   setDraggedSectionId(null)
                 }}
-              ><th colSpan="6">{section.name}</th></tr>
+              ><th colSpan="5">{section.name}</th></tr>
               {chores.filter((chore) => chore.section_id === section.section_id).map((chore) => (
                 <tr
                   key={chore.chore_id}
@@ -577,7 +575,6 @@ function App() {
                   >⠿</button></td>
                   <td>{chore.name}</td><td>{chore.label}</td>
                   <td>{[...new Set(chore.occurrences.map((item) => item.weekday))].map((day) => day.slice(0, 3)).join(', ')}</td>
-                  <td>{[...new Set(chore.occurrences.map((item) => item.time_range ?? 'Anytime'))].join(', ')}</td>
                   <td className="table-actions"><button className="text-button" type="button" onClick={() => openChoreEditor(chore)}>Edit</button><button className="remove-button" type="button" onClick={() => deleteChore(chore)} aria-label={`Delete ${chore.label}`} title="Delete chore">×</button></td>
                 </tr>
               ))}
@@ -620,7 +617,7 @@ function App() {
             {printGroups.map((group) => <tbody key={group.label}>
               <tr className="print-group"><th scope="rowgroup" colSpan={WEEKDAYS.length + 1}>{group.label}</th></tr>
               {group.rows.map((row) => <tr key={row.choreId}>
-                <th scope="row">{row.label}{row.timeRange && <small>{row.timeRange}</small>}</th>
+                <th scope="row">{row.label}</th>
                 {WEEKDAYS.map((weekday) => <td key={weekday}>{row.peopleByWeekday[weekday] ?? ''}</td>)}
               </tr>)}
             </tbody>)}

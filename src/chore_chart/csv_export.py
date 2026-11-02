@@ -41,12 +41,10 @@ def write_schedule_csv(schedule: Schedule, output: TextIO) -> None:
         ),
     ):
         assignments = rows[row_key]
-        time_range = row_key[2]
         display_section = sections[row_key]
-        display_time = f"{display_section} {time_range}" if time_range is not None else display_section
         writer.writerow(
             [
-            f"{labels[row_key]} ({display_time})",
+                f"{labels[row_key]} ({display_section})",
                 *(assignments.get(day, "") for day in weekdays),
             ]
         )
