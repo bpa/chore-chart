@@ -12,7 +12,7 @@ from starlette.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from chore_chart.csv_export import write_schedule_csv
-from chore_chart.domain import AvailabilitySlot, ChoreOccurrence, Section, TimeRange, Weekday
+from chore_chart.domain import BusyBlock, ChoreOccurrence, Section, TimeRange, Weekday
 from chore_chart.storage import SQLiteRepository
 
 
@@ -44,13 +44,14 @@ class ChoreOrderPayload(BaseModel):
     chore_ids: list[int]
 
 
-class AvailabilitySlotPayload(BaseModel):
+class BusyBlockPayload(BaseModel):
     weekday: str
     time_range: str
+    label: str | None = None
 
 
-class SetAvailabilityPayload(BaseModel):
-    slots: list[AvailabilitySlotPayload] = Field(default_factory=list)
+class SetBusyTimesPayload(BaseModel):
+    blocks: list[BusyBlockPayload] = Field(default_factory=list)
 
 
 class AssignmentRulePayload(BaseModel):
@@ -80,14 +81,15 @@ def _serialize_person(person: Any) -> dict[str, Any]:
     return {
         "person_id": person.person_id,
         "name": person.name,
-        "availability": [
-            {"weekday": slot.weekday.value, "time_range": str(slot.time_range)}
-            for slot in sorted(
-                person.availability,
+        "busy_times": [
+            {"weekday": block.weekday.value, "time_range": str(block.time_range), "label": block.label}
+            for block in sorted(
+                person.busy_times,
                 key=lambda item: (
                     item.weekday.order,
                     item.time_range.start_minute,
                     item.time_range.end_minute,
+                    item.label or "",
                 ),
             )
         ],
@@ -169,21 +171,22 @@ def create_person(payload: PersonCreate) -> dict[str, str]:
         repository.close()
 
 
-@app.put("/api/people/{person_name}/availability")
-def update_availability(
+@app.put("/api/people/{person_name}/busy-times")
+def update_busy_times(
     person_name: str,
-    payload: SetAvailabilityPayload,
+    payload: SetBusyTimesPayload,
 ) -> dict[str, Any]:
     repository = get_repository()
     try:
-        slots = [
-            AvailabilitySlot(
+        blocks = [
+            BusyBlock(
                 Weekday.parse(item.weekday),
                 TimeRange.parse(item.time_range),
+                item.label,
             )
-            for item in payload.slots
+            for item in payload.blocks
         ]
-        repository.set_availability(person_name, slots)
+        repository.set_busy_times(person_name, blocks)
         person = next(
             person for person in repository.list_people() if person.name == person_name
         )

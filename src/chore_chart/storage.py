@@ -12,7 +12,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from chore_chart.domain import (
     Assignment,
     AssignmentRule,
-    AvailabilitySlot,
+    BusyBlock,
     Chore,
     ChoreOccurrence,
     Person,
@@ -38,7 +38,7 @@ class PersonRecord(Base):
     name: Mapped[str] = mapped_column(String(120), unique=True)
 
 
-class AvailabilityRecord(Base):
+class BusyTimeRecord(Base):
     __tablename__ = "availability"
     __table_args__ = (
         UniqueConstraint("person_id", "weekday", "start_minute", "end_minute"),
@@ -49,6 +49,7 @@ class AvailabilityRecord(Base):
     weekday: Mapped[str] = mapped_column(String(9))
     start_minute: Mapped[int] = mapped_column(Integer, default=0)
     end_minute: Mapped[int] = mapped_column(Integer, default=1440)
+    label: Mapped[str | None] = mapped_column(String(160), nullable=True)
 
 
 class SectionRecord(Base):
@@ -152,20 +153,16 @@ class SQLiteRepository:
                 connection.exec_driver_sql("UPDATE chores SET label = name WHERE label IS NULL OR label = ''")
 
             range_missing = not {"start_minute", "end_minute"}.issubset(columns["availability"])
+            labels_missing = "label" not in columns["availability"]
             for table in ("availability", "occurrences", "schedule_assignments"):
                 for name in ("start_minute", "end_minute"):
                     if name not in columns[table]:
                         connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} INTEGER")
-            if range_missing and "time_label" in columns["availability"]:
-                person_ids = connection.exec_driver_sql("SELECT id FROM people").scalars().all()
+            if labels_missing:
+                connection.exec_driver_sql("ALTER TABLE availability ADD COLUMN label VARCHAR(160)")
                 connection.exec_driver_sql("DELETE FROM availability")
-                connection.exec_driver_sql(
-                    "INSERT INTO availability (person_id, weekday, start_minute, end_minute) "
-                    "SELECT people.id, weekdays.name, 0, 1440 FROM people "
-                    "CROSS JOIN (SELECT 'Monday' AS name UNION ALL SELECT 'Tuesday' "
-                    "UNION ALL SELECT 'Wednesday' UNION ALL SELECT 'Thursday' "
-                    "UNION ALL SELECT 'Friday' UNION ALL SELECT 'Saturday' UNION ALL SELECT 'Sunday') AS weekdays"
-                )
+            elif range_missing and "time_label" in columns["availability"]:
+                connection.exec_driver_sql("DELETE FROM availability")
 
             if "time_label" not in columns["occurrences"]:
                 return
@@ -262,18 +259,19 @@ class SQLiteRepository:
             connection.exec_driver_sql("ALTER TABLE occurrences_new RENAME TO occurrences")
 
             availability_rows = connection.exec_driver_sql(
-                "SELECT id, person_id, weekday, start_minute, end_minute FROM availability"
+                "SELECT id, person_id, weekday, start_minute, end_minute, label FROM availability"
             ).all()
             connection.exec_driver_sql(
                 "CREATE TABLE availability_new ("
                 "id INTEGER PRIMARY KEY, person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE, "
                 "weekday VARCHAR(9) NOT NULL, start_minute INTEGER NOT NULL, end_minute INTEGER NOT NULL, "
+                "label VARCHAR(160), "
                 "CONSTRAINT uq_availability_window UNIQUE (person_id, weekday, start_minute, end_minute))"
             )
             for availability in availability_rows:
                 connection.exec_driver_sql(
                     "INSERT OR IGNORE INTO availability_new "
-                    "(id, person_id, weekday, start_minute, end_minute) VALUES (?, ?, ?, ?, ?)",
+                    "(id, person_id, weekday, start_minute, end_minute, label) VALUES (?, ?, ?, ?, ?, ?)",
                     tuple(availability),
                 )
             connection.exec_driver_sql("DROP TABLE availability")
@@ -440,69 +438,58 @@ class SQLiteRepository:
             session.add(record)
             session.flush()
             person_id = record.id
-            full_day = TimeRange(0, 1440)
-            session.add_all(
-                AvailabilityRecord(
-                    person_id=person_id,
-                    weekday=day.value,
-                    start_minute=full_day.start_minute,
-                    end_minute=full_day.end_minute,
-                )
-                for day in Weekday
-            )
-        return Person(
-            name=person.name,
-            person_id=person_id,
-            availability=frozenset(AvailabilitySlot(day, full_day) for day in Weekday),
-        )
+        return Person(name=person.name, person_id=person_id)
 
     def list_people(self) -> list[Person]:
         with self._sessions() as session:
             records = session.scalars(select(PersonRecord).order_by(PersonRecord.name)).all()
-            availability_rows = session.scalars(select(AvailabilityRecord)).all()
-        slots_by_person: dict[int, set[AvailabilitySlot]] = {}
-        for row in availability_rows:
-            slots_by_person.setdefault(row.person_id, set()).add(
-                AvailabilitySlot(
+            busy_rows = session.scalars(select(BusyTimeRecord)).all()
+        busy_by_person: dict[int, set[BusyBlock]] = {}
+        for row in busy_rows:
+            busy_by_person.setdefault(row.person_id, set()).add(
+                BusyBlock(
                     Weekday.parse(row.weekday),
                     TimeRange(row.start_minute, row.end_minute),
+                    row.label,
                 )
             )
         return [
             Person(
                 name=record.name,
                 person_id=record.id,
-                availability=frozenset(slots_by_person.get(record.id, set())),
+                busy_times=frozenset(busy_by_person.get(record.id, set())),
             )
             for record in records
         ]
 
-    def set_availability(self, person_name: str, slots: Iterable[AvailabilitySlot]) -> None:
-        normalized_slots = set(slots)
+    def set_busy_times(self, person_name: str, blocks: Iterable[BusyBlock]) -> None:
+        normalized_blocks = set(blocks)
         with self._sessions.begin() as session:
             person = session.scalar(select(PersonRecord).where(PersonRecord.name == person_name.strip()))
             if person is None:
                 raise ValueError(f"Unknown person {person_name!r}.")
-            session.execute(delete(AvailabilityRecord).where(AvailabilityRecord.person_id == person.id))
+            session.execute(delete(BusyTimeRecord).where(BusyTimeRecord.person_id == person.id))
             session.add_all(
-                AvailabilityRecord(
+                BusyTimeRecord(
                     person_id=person.id,
-                    weekday=slot.weekday.value,
-                    start_minute=slot.time_range.start_minute,
-                    end_minute=slot.time_range.end_minute,
+                    weekday=block.weekday.value,
+                    start_minute=block.time_range.start_minute,
+                    end_minute=block.time_range.end_minute,
+                    label=block.label,
                 )
-                for slot in sorted(
-                    normalized_slots,
+                for block in sorted(
+                    normalized_blocks,
                     key=lambda item: (
                         item.weekday.order,
                         item.time_range.start_minute,
                         item.time_range.end_minute,
+                        item.label or "",
                     ),
                 )
             )
 
-    def clear_availability(self, person_name: str) -> None:
-        self.set_availability(person_name, [])
+    def clear_busy_times(self, person_name: str) -> None:
+        self.set_busy_times(person_name, [])
 
     def add_chore(
         self,

@@ -2,7 +2,7 @@ import sqlite3
 
 import pytest
 
-from chore_chart.domain import AvailabilitySlot, ChoreOccurrence, TimeRange, Weekday
+from chore_chart.domain import BusyBlock, ChoreOccurrence, TimeRange, Weekday
 from chore_chart.storage import AssignmentRecord, SQLiteRepository
 
 
@@ -13,64 +13,62 @@ def repository():
     instance.close()
 
 
-def test_people_and_availability_round_trip(repository):
+def test_people_and_labeled_busy_times_round_trip(repository):
     repository.add_person("Alex")
-    repository.set_availability(
+    repository.set_busy_times(
         "Alex",
         [
-            AvailabilitySlot(Weekday.MONDAY, TimeRange.parse("08:00-12:00")),
-            AvailabilitySlot(Weekday.SATURDAY, TimeRange.parse("13:00-18:00")),
+            BusyBlock(Weekday.MONDAY, TimeRange.parse("08:00-12:00"), "Work"),
+            BusyBlock(Weekday.SATURDAY, TimeRange.parse("13:00-18:00")),
         ],
     )
 
     person = repository.list_people()[0]
     assert person.name == "Alex"
-    assert person.availability == {
-        AvailabilitySlot(Weekday.MONDAY, TimeRange.parse("08:00-12:00")),
-        AvailabilitySlot(Weekday.SATURDAY, TimeRange.parse("13:00-18:00")),
+    assert person.busy_times == {
+        BusyBlock(Weekday.MONDAY, TimeRange.parse("08:00-12:00"), "Work"),
+        BusyBlock(Weekday.SATURDAY, TimeRange.parse("13:00-18:00")),
     }
 
 
-def test_setting_availability_replaces_previous_slots(repository):
+def test_setting_busy_times_replaces_previous_blocks(repository):
     repository.add_person("Alex")
-    repository.set_availability("Alex", [AvailabilitySlot(Weekday.MONDAY, TimeRange.parse("08:00-12:00"))])
-    repository.set_availability("Alex", [AvailabilitySlot(Weekday.TUESDAY, TimeRange.parse("17:00-20:00"))])
+    repository.set_busy_times("Alex", [BusyBlock(Weekday.MONDAY, TimeRange.parse("08:00-12:00"))])
+    repository.set_busy_times("Alex", [BusyBlock(Weekday.TUESDAY, TimeRange.parse("17:00-20:00"))])
 
-    assert repository.list_people()[0].availability == {
-        AvailabilitySlot(Weekday.TUESDAY, TimeRange.parse("17:00-20:00"))
+    assert repository.list_people()[0].busy_times == {
+        BusyBlock(Weekday.TUESDAY, TimeRange.parse("17:00-20:00"))
     }
 
 
-def test_clear_availability_removes_all_slots(repository):
+def test_clear_busy_times_removes_all_blocks(repository):
     repository.add_person("Alex")
-    repository.set_availability(
+    repository.set_busy_times(
         "Alex",
         [
-            AvailabilitySlot(Weekday.MONDAY, TimeRange.parse("08:00-12:00")),
-            AvailabilitySlot(Weekday.SATURDAY, TimeRange.parse("13:00-18:00")),
+            BusyBlock(Weekday.MONDAY, TimeRange.parse("08:00-12:00")),
+            BusyBlock(Weekday.SATURDAY, TimeRange.parse("13:00-18:00")),
         ],
     )
 
-    repository.clear_availability("Alex")
+    repository.clear_busy_times("Alex")
 
-    assert repository.list_people()[0].availability == set()
+    assert repository.list_people()[0].busy_times == set()
 
 
-def test_new_person_starts_with_all_day_availability(repository):
+def test_new_person_starts_fully_available(repository):
     person = repository.add_person("Alex")
 
-    assert person.availability == {
-        AvailabilitySlot(day, TimeRange(0, 1440)) for day in Weekday
-    }
+    assert person.busy_times == set()
 
 
-def test_duplicate_person_and_unknown_availability_person_are_rejected(repository):
+def test_duplicate_person_and_unknown_busy_time_person_are_rejected(repository):
     repository.add_person("Alex")
 
     with pytest.raises(ValueError, match="already exists"):
         repository.add_person("Alex")
     with pytest.raises(ValueError, match="Unknown person"):
-        repository.set_availability("Sam", [])
+        repository.set_busy_times("Sam", [])
 
 
 def test_chores_and_occurrences_round_trip(repository):
@@ -136,8 +134,6 @@ def test_rules_round_trip_and_update(repository):
 def test_schedule_generation_persists_history_and_can_be_exported_again(repository):
     repository.add_person("Alex")
     repository.add_person("Sam")
-    repository.set_availability("Alex", [AvailabilitySlot(Weekday.MONDAY, TimeRange(0, 1440))])
-    repository.set_availability("Sam", [AvailabilitySlot(Weekday.MONDAY, TimeRange(0, 1440))])
     repository.add_chore(
         "Dishes",
         [ChoreOccurrence("Dishes", Weekday.MONDAY, "Morning", time_range=TimeRange.parse("09:00-10:00"))],
@@ -408,9 +404,7 @@ def test_existing_quoted_chore_and_schedule_values_are_migrated(tmp_path):
             ("Dishes", "Kitchen", "Morning"),
             ("Dishes [Evening]", "Kitchen", "Evening"),
         ]
-        assert migrated.list_people()[0].availability == {
-            AvailabilitySlot(day, TimeRange(0, 1440)) for day in Weekday
-        }
+        assert migrated.list_people()[0].busy_times == set()
         assert [(assignment.occurrence.section_name, assignment.occurrence.chore_label) for assignment in assignments] == [
             ("Morning", "Kitchen"),
             ("Evening", "Kitchen"),

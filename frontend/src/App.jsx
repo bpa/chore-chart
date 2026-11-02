@@ -198,9 +198,9 @@ function App() {
   const [sectionDrafts, setSectionDrafts] = useState({})
   const [draggedSectionId, setDraggedSectionId] = useState(null)
   const [draggedChoreId, setDraggedChoreId] = useState(null)
-  const [availabilityPerson, setAvailabilityPerson] = useState('')
-  const [availabilitySlots, setAvailabilitySlots] = useState([])
-  const [slotDraft, setSlotDraft] = useState({ weekday: 'Monday', time_range: '09:00-17:00' })
+  const [busyTimesPerson, setBusyTimesPerson] = useState('')
+  const [busyTimes, setBusyTimes] = useState([])
+  const [busyTimeDraft, setBusyTimeDraft] = useState({ weekday: 'Monday', time_range: '09:00-17:00', label: '' })
   const [rulePerson, setRulePerson] = useState('')
   const [ruleMinimum, setRuleMinimum] = useState('0')
   const [ruleMaximum, setRuleMaximum] = useState('')
@@ -312,28 +312,28 @@ function App() {
     await refresh()
   })
 
-  const openAvailability = (person) => {
-    setAvailabilityPerson(person.name)
-    setAvailabilitySlots(person.availability)
+  const openBusyTimes = (person) => {
+    setBusyTimesPerson(person.name)
+    setBusyTimes(person.busy_times)
   }
 
-  const addAvailabilitySlot = () => {
-    if (!availabilitySlots.some((slot) => slot.weekday === slotDraft.weekday && slot.time_range === slotDraft.time_range)) {
-      setAvailabilitySlots([...availabilitySlots, slotDraft])
+  const addBusyTime = () => {
+    if (!busyTimes.some((block) => block.weekday === busyTimeDraft.weekday && block.time_range === busyTimeDraft.time_range)) {
+      setBusyTimes([...busyTimes, busyTimeDraft])
     }
   }
 
-  const saveAvailability = (event) => {
+  const saveBusyTimes = (event) => {
     event.preventDefault()
     run(async () => {
-      await request(`/people/${encodeURIComponent(availabilityPerson)}/availability`, {
+      await request(`/people/${encodeURIComponent(busyTimesPerson)}/busy-times`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slots: availabilitySlots }),
+        body: JSON.stringify({ blocks: busyTimes }),
       })
-      const savedName = availabilityPerson
-      setAvailabilityPerson('')
+      const savedName = busyTimesPerson
+      setBusyTimesPerson('')
       await refresh()
-      setMessage(`Updated availability for ${savedName}`)
+      setMessage(`Updated busy times for ${savedName}`)
     })
   }
 
@@ -469,20 +469,21 @@ function App() {
           <li key={person.person_id}>
             <span className="person-mark">{person.name.slice(0, 1).toUpperCase()}</span>
             <span className="person-name">{person.name}</span>
-            <button className="text-button" type="button" onClick={() => openAvailability(person)}>{availabilityPerson === person.name ? 'Editing availability' : 'Availability'}</button>
+            <button className="text-button" type="button" onClick={() => openBusyTimes(person)}>{busyTimesPerson === person.name ? 'Editing busy times' : 'Busy times'}</button>
           </li>
         ))}</ul> : <p className="empty-note">No people yet.</p>}
-        {availabilityPerson && <form className="editor availability-editor" onSubmit={saveAvailability}>
-          <div className="editor-title"><strong>{availabilityPerson}</strong><button type="button" className="close-button" onClick={() => setAvailabilityPerson('')} aria-label="Close availability editor">×</button></div>
-          <div className="slot-list">{availabilitySlots.map((slot, index) => (
-            <div className="slot-row" key={`${slot.weekday}-${slot.time_range}-${index}`}><span>{slot.weekday}</span><span>{slot.time_range}</span><button type="button" className="remove-button" onClick={() => setAvailabilitySlots(availabilitySlots.filter((_, slotIndex) => slotIndex !== index))} aria-label={`Remove ${slot.weekday} availability`}>×</button></div>
+        {busyTimesPerson && <form className="editor busy-times-editor" onSubmit={saveBusyTimes}>
+          <div className="editor-title"><strong>{busyTimesPerson} · Busy times</strong><button type="button" className="close-button" onClick={() => setBusyTimesPerson('')} aria-label="Close busy times editor">×</button></div>
+          <div className="slot-list">{busyTimes.map((block, index) => (
+            <div className="slot-row" key={`${block.weekday}-${block.time_range}-${index}`}><span>{block.weekday}</span><span>{block.time_range}</span><span>{block.label}</span><button type="button" className="remove-button" onClick={() => setBusyTimes(busyTimes.filter((_, blockIndex) => blockIndex !== index))} aria-label={`Remove ${block.weekday} busy time`}>×</button></div>
           ))}</div>
           <div className="slot-controls">
-            <select aria-label="Availability weekday" value={slotDraft.weekday} onChange={(event) => setSlotDraft({ ...slotDraft, weekday: event.target.value })}>{WEEKDAYS.map((day) => <option key={day}>{day}</option>)}</select>
-            <input aria-label="Availability time range" value={slotDraft.time_range} onChange={(event) => setSlotDraft({ ...slotDraft, time_range: event.target.value })} placeholder="09:00-17:00" />
-            <button type="button" className="subtle-button" onClick={addAvailabilitySlot}>Add slot</button>
+            <select aria-label="Busy weekday" value={busyTimeDraft.weekday} onChange={(event) => setBusyTimeDraft({ ...busyTimeDraft, weekday: event.target.value })}>{WEEKDAYS.map((day) => <option key={day}>{day}</option>)}</select>
+            <input aria-label="Busy time range" value={busyTimeDraft.time_range} onChange={(event) => setBusyTimeDraft({ ...busyTimeDraft, time_range: event.target.value })} placeholder="09:00-17:00" />
+            <input aria-label="Busy time label (optional)" value={busyTimeDraft.label} onChange={(event) => setBusyTimeDraft({ ...busyTimeDraft, label: event.target.value })} placeholder="Label (optional)" />
+            <button type="button" className="subtle-button" onClick={addBusyTime}>Add block</button>
           </div>
-          <button className="save-button" type="submit" disabled={busy}>Save availability</button>
+          <button className="save-button" type="submit" disabled={busy}>Save busy times</button>
         </form>}
       </section>}
 

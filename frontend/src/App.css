@@ -29,8 +29,8 @@ input::placeholder { color: #9a9d95; }
 .editor-title { display: flex; justify-content: space-between; align-items: center; color: var(--ink); font-size: 12px; }
 .close-button,.remove-button { color: var(--muted); background: transparent; font-size: 18px; line-height: 1; }
 .slot-list { margin: 8px 0 10px; max-height: 130px; overflow: auto; }
-.slot-row { display: grid; grid-template-columns: 1fr 1fr 20px; gap: 5px; align-items: center; min-height: 27px; color: var(--ink-soft); font-size: 11px; }
-.slot-controls { display: grid; grid-template-columns: 1fr 1.2fr auto; gap: 5px; }
+.slot-row { display: grid; grid-template-columns: 1fr 1fr 1.2fr 20px; gap: 5px; align-items: center; min-height: 27px; color: var(--ink-soft); font-size: 11px; }
+.slot-controls { display: grid; grid-template-columns: 1fr 1.2fr 1.2fr auto; gap: 5px; }
 .slot-controls input,.slot-controls select { width: 100%; padding: 7px 6px; font-size: 11px; }
 .form-stack { display: grid; gap: 11px; }
 .form-stack label { display: grid; gap: 5px; color: var(--ink-soft); font: 600 11px var(--sans); }
@@ -132,7 +132,7 @@ input::placeholder { color: #9a9d95; }
 .modal-heading { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 21px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 22px; }
 .modal-actions .subtle-button { min-height: 36px; }
-.availability-editor { max-width: 600px; }
+.busy-times-editor { max-width: 600px; }
 .schedule-empty { display: grid; justify-items: center; padding: 90px 20px; text-align: center; }
 .empty-mark { display: grid; width: 42px; height: 42px; place-items: center; margin-bottom: 15px; border: 1px solid #b9cfc5; border-radius: 50%; color: var(--green); font-size: 24px; }
 .schedule-empty h3 { margin: 0 0 7px; color: var(--ink); font: 500 23px var(--display); }

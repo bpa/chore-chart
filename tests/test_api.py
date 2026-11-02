@@ -3,16 +3,17 @@ from fastapi.testclient import TestClient
 from chore_chart.api import app
 
 
-def test_api_manages_people_availability_rules_and_chores(tmp_path, monkeypatch):
+def test_api_manages_people_busy_times_rules_and_chores(tmp_path, monkeypatch):
     monkeypatch.setenv("CHORE_CHART_DB", str(tmp_path / "api.sqlite3"))
     client = TestClient(app)
 
     assert client.get("/api/health").json() == {"status": "ok"}
     assert client.post("/api/people", json={"name": "Alex"}).status_code == 200
+    assert client.get("/api/people").json()[0]["busy_times"] == []
     assert client.put(
-        "/api/people/Alex/availability",
-        json={"slots": [{"weekday": "Monday", "time_range": "09:00-12:00"}]},
-    ).json()["availability"] == [{"weekday": "Monday", "time_range": "09:00-12:00"}]
+        "/api/people/Alex/busy-times",
+        json={"blocks": [{"weekday": "Monday", "time_range": "09:00-12:00", "label": "Work"}]},
+    ).json()["busy_times"] == [{"weekday": "Monday", "time_range": "09:00-12:00", "label": "Work"}]
     assert client.put(
         "/api/rules/Alex", json={"minimum": 1, "maximum": 2}
     ).json() == {"person": "Alex", "minimum": 1, "maximum": 2}
@@ -101,7 +102,7 @@ def test_api_returns_client_errors_for_invalid_configuration(tmp_path, monkeypat
     client = TestClient(app)
 
     assert client.put(
-        "/api/people/Unknown/availability", json={"slots": []}
+        "/api/people/Unknown/busy-times", json={"blocks": []}
     ).status_code == 400
     section = client.post("/api/sections", json={"name": "Home"}).json()
     assert client.post(

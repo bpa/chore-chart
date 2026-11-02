@@ -93,13 +93,18 @@ class TimeRange:
 
 
 @dataclass(frozen=True, slots=True)
-class AvailabilitySlot:
+class BusyBlock:
     weekday: Weekday
     time_range: TimeRange
+    label: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.time_range, TimeRange):
-            raise ValueError("Availability must use a valid time range.")
+            raise ValueError("Busy time must use a valid time range.")
+        label = self.label.strip() if self.label is not None else ""
+        if len(label) > 160:
+            raise ValueError("Busy time labels cannot exceed 160 characters.")
+        object.__setattr__(self, "label", label or None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,7 +157,7 @@ class ChoreOccurrence:
 @dataclass(frozen=True, slots=True)
 class Person:
     name: str
-    availability: frozenset[AvailabilitySlot] = field(default_factory=frozenset)
+    busy_times: frozenset[BusyBlock] = field(default_factory=frozenset)
     person_id: int | None = None
 
     def __post_init__(self) -> None:

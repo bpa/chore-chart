@@ -32,7 +32,7 @@ npm install
 npm run dev
 ```
 
-The development server proxies `/api` requests to FastAPI on port 8000. The interface has People, Chores, Limits, and Charts tabs. Chores have an ordered section, a display label, an order within the section, selected weekdays, and time windows. Section names and order are editable. Availability is stored per person/day/time range and does not depend on a section.
+The development server proxies `/api` requests to FastAPI on port 8000. The interface has People, Chores, Limits, and Charts tabs. Chores have an ordered section, a display label, an order within the section, selected weekdays, and time windows. Section names and order are editable. People are available by default; optional labeled busy-time blocks can be added per person, weekday, and time range.
 
 Schedule assignments reference chore, person, and section IDs. Names, labels, and ordering are loaded from those records, so renaming a section updates saved charts as well. Time ranges are local 24-hour values within one day. Charts can be saved, exported as CSV, and printed as a weekly table.
 

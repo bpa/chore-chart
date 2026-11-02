@@ -2,7 +2,7 @@ import pytest
 
 from chore_chart.domain import (
     AssignmentRule,
-    AvailabilitySlot,
+    BusyBlock,
     Chore,
     ChoreOccurrence,
     Person,
@@ -31,7 +31,7 @@ def test_weekday_parse_rejects_unknown_day():
 @pytest.mark.parametrize(
     "factory",
     [
-        lambda: AvailabilitySlot(Weekday.MONDAY, TimeRange(600, 600)),
+        lambda: BusyBlock(Weekday.MONDAY, TimeRange(600, 600)),
         lambda: ChoreOccurrence(" ", Weekday.MONDAY, "Morning"),
         lambda: ChoreOccurrence("Dishes", Weekday.MONDAY, " "),
         lambda: Person("  "),
@@ -46,11 +46,12 @@ def test_domain_objects_reject_required_blank_values(factory):
 
 def test_domain_objects_trim_names_and_labels():
     person = Person(" Alex ")
-    slot = AvailabilitySlot(Weekday.MONDAY, TimeRange.parse("16:00-19:00"))
+    slot = BusyBlock(Weekday.MONDAY, TimeRange.parse("16:00-19:00"), " Appointment ")
     occurrence = ChoreOccurrence(" Dishes ", Weekday.MONDAY, " Morning ")
 
     assert person.name == "Alex"
     assert str(slot.time_range) == "16:00-19:00"
+    assert slot.label == "Appointment"
     assert occurrence.chore_name == "Dishes"
     assert occurrence.section_name == "Morning"
 

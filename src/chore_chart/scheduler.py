@@ -300,14 +300,7 @@ def generate_schedule(
         eligible_people = [
             person_index
             for person_index, person in enumerate(people)
-            if any(
-                available.weekday == occurrence.weekday
-                and (
-                    occurrence.time_range is None
-                    or available.time_range.overlap_minutes(occurrence.time_range) >= 60
-                )
-                for available in person.availability
-            )
+            if _is_available(person, occurrence)
         ]
         if not eligible_people:
             time_description = (
@@ -336,7 +329,7 @@ def generate_schedule(
     if len(occurrences) > 120 or assignment_variable_count > 6000:
         raise ScheduleSearchLimitError(
             "The bounded scheduler could not find a valid assignment for this large problem. "
-            "Review availability, rules, or reduce the number of occurrences."
+            "Review busy times, rules, or reduce the number of occurrences."
         )
 
     model = cp_model.CpModel()
@@ -511,8 +504,8 @@ def generate_schedule(
     result = solver.solve(model)
     if result not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         raise InfeasibleScheduleError(
-            "No schedule satisfies everyone's availability and assignment-count rules. "
-            "Review availability, minimums, and maximums."
+            "No schedule satisfies everyone's busy times and assignment-count rules. "
+            "Review busy times, minimums, and maximums."
         )
 
     assignments = tuple(
@@ -536,3 +529,21 @@ def generate_schedule(
         for occurrence_index, occurrence in enumerate(occurrences)
     )
     return Schedule(assignments=assignments, seed=seed)
+
+
+def _is_available(person: Person, occurrence: ChoreOccurrence) -> bool:
+    busy = sorted(
+        (block.time_range for block in person.busy_times if block.weekday == occurrence.weekday),
+        key=lambda time_range: time_range.start_minute,
+    )
+    if occurrence.time_range is not None:
+        return not any(time_range.overlap_minutes(occurrence.time_range) for time_range in busy)
+
+    covered_until = 0
+    for time_range in busy:
+        if time_range.start_minute > covered_until:
+            break
+        covered_until = max(covered_until, time_range.end_minute)
+        if covered_until == 1440:
+            return False
+    return True

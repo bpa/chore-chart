@@ -4,7 +4,7 @@ from time import perf_counter
 from chore_chart.domain import (
     Assignment,
     AssignmentRule,
-    AvailabilitySlot,
+    BusyBlock,
     Chore,
     ChoreOccurrence,
     Person,
@@ -20,11 +20,7 @@ def make_occurrence(chore_name, weekday=Weekday.MONDAY, time_label="Morning", ti
 
 
 def make_person(name, *occurrences):
-    availability = frozenset(
-        AvailabilitySlot(occurrence.weekday, TimeRange(0, 1440))
-        for occurrence in occurrences
-    )
-    return Person(name, availability)
+    return Person(name)
 
 
 def test_schedule_assigns_each_occurrence_to_an_available_person_within_bounds():
@@ -44,13 +40,11 @@ def test_schedule_assigns_each_occurrence_to_an_available_person_within_bounds()
     assert {item.person_name for item in schedule.assignments} == {"Alex", "Sam"}
     for assignment in schedule.assignments:
         person = next(person for person in people if person.name == assignment.person_name)
-        assert any(
-            slot.weekday == assignment.occurrence.weekday
-            and (
-                assignment.occurrence.time_range is None
-                or slot.time_range.overlap_minutes(assignment.occurrence.time_range) >= 60
-            )
-            for slot in person.availability
+        assert not any(
+            block.weekday == assignment.occurrence.weekday
+            and assignment.occurrence.time_range is not None
+            and block.time_range.overlap_minutes(assignment.occurrence.time_range)
+            for block in person.busy_times
         )
 
 
@@ -208,7 +202,6 @@ def test_large_schedule_completes_within_thirty_seconds():
     people = [
         Person(
             f"P{index}",
-            frozenset(AvailabilitySlot(day, TimeRange(0, 1440)) for day in Weekday),
         )
         for index in range(12)
     ]
@@ -229,43 +222,50 @@ def test_large_schedule_completes_within_thirty_seconds():
     assert perf_counter() - started < 30
 
 
-def test_no_available_person_reports_the_occurrence():
+def test_full_day_busy_time_reports_the_occurrence():
     occurrence = make_occurrence("Dishes")
+    person = Person("Alex", frozenset({BusyBlock(Weekday.MONDAY, TimeRange(0, 1440))}))
 
     with pytest.raises(InfeasibleScheduleError, match="No available person.*Dishes.*Monday"):
-        generate_schedule([Person("Alex")], [Chore("Dishes", (occurrence,))])
+        generate_schedule([person], [Chore("Dishes", (occurrence,))])
 
 
-def test_availability_requires_at_least_one_hour_of_overlap():
+def test_busy_time_excludes_any_overlap_with_timed_chore():
     occurrence = make_occurrence(
         "Dishes",
         time_range=TimeRange.parse("17:00-18:30"),
     )
-    available_person = Person(
+    busy_person = Person(
         "Alex",
-        frozenset({AvailabilitySlot(Weekday.MONDAY, TimeRange.parse("16:00-18:00"))}),
+        frozenset({BusyBlock(Weekday.MONDAY, TimeRange.parse("16:00-18:00"), "Appointment")}),
     )
-    short_overlap_person = Person(
+    free_person = Person(
         "Sam",
-        frozenset({AvailabilitySlot(Weekday.MONDAY, TimeRange.parse("16:00-17:59"))}),
+        frozenset({BusyBlock(Weekday.MONDAY, TimeRange.parse("19:00-20:00"))}),
     )
 
-    schedule = generate_schedule([available_person], [Chore("Dishes", (occurrence,))])
-    assert schedule.assignments[0].person_name == "Alex"
-    with pytest.raises(InfeasibleScheduleError, match="at least one hour"):
-        generate_schedule([short_overlap_person], [Chore("Dishes", (occurrence,))])
+    schedule = generate_schedule([busy_person, free_person], [Chore("Dishes", (occurrence,))])
+    assert schedule.assignments[0].person_name == "Sam"
 
 
-def test_untimed_chore_only_requires_availability_on_that_weekday():
+def test_untimed_chore_allows_partial_busy_time_on_that_weekday():
     occurrence = make_occurrence("Dishes")
     person = Person(
         "Alex",
-        frozenset({AvailabilitySlot(Weekday.MONDAY, TimeRange.parse("13:00-14:00"))}),
+        frozenset({BusyBlock(Weekday.MONDAY, TimeRange.parse("13:00-14:00"))}),
     )
 
     schedule = generate_schedule([person], [Chore("Dishes", (occurrence,))])
 
     assert schedule.assignments[0].person_name == "Alex"
+
+
+def test_untimed_chore_excludes_full_day_busy_time():
+    occurrence = make_occurrence("Dishes")
+    person = Person("Alex", frozenset({BusyBlock(Weekday.MONDAY, TimeRange(0, 1440))}))
+
+    with pytest.raises(InfeasibleScheduleError, match="No available person"):
+        generate_schedule([person], [Chore("Dishes", (occurrence,))])
 
 
 def test_person_is_not_assigned_overlapping_timed_chores():
