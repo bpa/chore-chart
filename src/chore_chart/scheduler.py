@@ -74,18 +74,12 @@ def _schedule_failure_details(
     for first_index, second_index in combinations(range(len(occurrences)), 2):
         first = occurrences[first_index]
         second = occurrences[second_index]
-        timed_overlap = (
-            first.weekday == second.weekday
-            and first.time_range is not None
-            and second.time_range is not None
-            and first.time_range.overlap_minutes(second.time_range) > 0
-        )
         same_day_label = (
             first.weekday == second.weekday
             and (first.chore_label or first.chore_name).casefold()
             == (second.chore_label or second.chore_name).casefold()
         )
-        if not timed_overlap and not same_day_label:
+        if not same_day_label:
             continue
 
         shared_people = set(eligibility[first_index]) & set(eligibility[second_index])
@@ -94,11 +88,6 @@ def _schedule_failure_details(
         conflict_count += 1
         if conflict_count > 8:
             continue
-        reasons = []
-        if timed_overlap:
-            reasons.append("their time ranges overlap")
-        if same_day_label:
-            reasons.append("they share a chore label on the same day")
         eligible_names = ", ".join(people[index].name for index in sorted(shared_people))
         if len(shared_people) == 1:
             shared_detail = f"{eligible_names} is the only shared eligible person"
@@ -109,7 +98,7 @@ def _schedule_failure_details(
         details.append(
             f"Conflict: {first.chore_name} ({first.weekday.value}{first_time}) and "
             f"{second.chore_name} ({second.weekday.value}{second_time}) cannot be assigned "
-            f"to the same person because {', and '.join(reasons)}; {shared_detail}."
+            f"to the same person because they share a chore label on the same day; {shared_detail}."
         )
 
     if conflict_count > 8:
@@ -156,13 +145,8 @@ def _heuristic_schedule(
         for first_index, second_index in combinations(day_occurrences, 2):
             first = occurrences[first_index]
             second = occurrences[second_index]
-            timed_overlap = (
-                first.time_range is not None
-                and second.time_range is not None
-                and first.time_range.overlap_minutes(second.time_range) > 0
-            )
             same_daily_label = labels[first_index] == labels[second_index]
-            if timed_overlap or same_daily_label:
+            if same_daily_label:
                 conflicts[first_index].add(second_index)
                 conflicts[second_index].add(first_index)
                 degrees[first_index] += 1
@@ -457,10 +441,10 @@ def generate_schedule(
         return heuristic_result
 
     assignment_variable_count = sum(len(candidates) for candidates in eligibility.values())
-    if len(occurrences) > 120 or assignment_variable_count > 6000:
+    if len(occurrences) > 200 or assignment_variable_count > 6000:
         raise ScheduleSearchLimitError(
             "The scheduler could not determine a valid assignment within its size limits: "
-            f"{len(occurrences)} occurrences (limit 120) and {assignment_variable_count} "
+            f"{len(occurrences)} occurrences (limit 200) and {assignment_variable_count} "
             "eligible person-occurrence choices (limit 6000). This does not prove that no "
             "schedule exists. Reduce the problem size or narrow eligibility with busy times."
         )
@@ -474,21 +458,6 @@ def generate_schedule(
             assigned[(occurrence_index, person_index)] = variable
             variables.append(variable)
         model.add_exactly_one(variables)
-
-    for first_index, second_index in combinations(range(len(occurrences)), 2):
-        first = occurrences[first_index]
-        second = occurrences[second_index]
-        if (
-            first.weekday != second.weekday
-            or first.time_range is None
-            or second.time_range is None
-            or first.time_range.overlap_minutes(second.time_range) == 0
-        ):
-            continue
-        for person_index in sorted(set(eligibility[first_index]) & set(eligibility[second_index])):
-            model.add(
-                assigned[(first_index, person_index)] + assigned[(second_index, person_index)] <= 1
-            )
 
     label_day_groups: dict[tuple[Weekday, str], list[int]] = {}
     label_groups: dict[str, list[int]] = {}
@@ -590,7 +559,6 @@ def generate_schedule(
         workload_balance_variables.append(difference)
 
     daily_balance_variables = []
-    daily_balance_bound = 0
     for weekday, occurrence_indices in day_groups.items():
         daily_counts = [
             sum(person_index in eligibility[index] for index in occurrence_indices)
@@ -622,7 +590,6 @@ def generate_schedule(
                 first_load * second_count - second_load * first_count,
             )
             daily_balance_variables.append(difference)
-            daily_balance_bound += bound
 
     recent_loads: Counter[str] = Counter()
     repeat_counts: Counter[tuple[str, str]] = Counter()
@@ -645,87 +612,94 @@ def generate_schedule(
         )
         for occurrence_index, person_index in assigned
     }
-    history_bound = sum(
-        max(
-            history_costs[(occurrence_index, person_index)]
-            for person_index in eligible_people
-        )
-        for occurrence_index, eligible_people in eligibility.items()
-    )
-    label_repeat_weight = history_bound + 1
-    section_repeat_weight = len(label_repeat_variables) * label_repeat_weight + history_bound + 1
-    day_repeat_weight = (
-        len(section_repeat_variables) * section_repeat_weight
-        + len(label_repeat_variables) * label_repeat_weight
-        + history_bound
-        + 1
-    )
-    daily_balance_weight = (
-        len(day_repeat_variables) * day_repeat_weight
-        + len(section_repeat_variables) * section_repeat_weight
-        + len(label_repeat_variables) * label_repeat_weight
-        + history_bound
-        + 1
-    )
-    workload_weight = (
-        daily_balance_bound * daily_balance_weight
-        + len(day_repeat_variables) * day_repeat_weight
-        + len(section_repeat_variables) * section_repeat_weight
-        + len(label_repeat_variables) * label_repeat_weight
-        + history_bound
-        + 1
-    )
-    model.minimize(
-        sum(workload_balance_variables) * workload_weight
-        + sum(daily_balance_variables) * daily_balance_weight
-        + sum(day_repeat_variables) * day_repeat_weight
-        + sum(section_repeat_variables) * section_repeat_weight
-        + sum(label_repeat_variables) * label_repeat_weight
-        + sum(
-            history_costs[(occurrence_index, person_index)] * variable
-            for (occurrence_index, person_index), variable in assigned.items()
-        )
-    )
-
     solver = cp_model.CpSolver()
     solver.parameters.random_seed = seed if seed is not None else 0
     solver.parameters.num_search_workers = 8
-    solver.parameters.max_time_in_seconds = 8.0
-    result = solver.solve(model)
-    if result == cp_model.INFEASIBLE:
-        raise InfeasibleScheduleError(
-            "No schedule satisfies everyone's busy times and assignment-count rules.\n"
-            + _schedule_failure_details(people, occurrences, eligibility, rule_by_person)
+    objectives = [
+        sum(workload_balance_variables),
+        sum(daily_balance_variables),
+        sum(day_repeat_variables),
+        sum(section_repeat_variables),
+        sum(label_repeat_variables),
+    ]
+    objectives = [
+        objective
+        for variables, objective in zip(
+            (
+                workload_balance_variables,
+                daily_balance_variables,
+                day_repeat_variables,
+                section_repeat_variables,
+                label_repeat_variables,
+            ),
+            objectives,
         )
-    if result == cp_model.UNKNOWN:
+        if variables
+    ]
+    history_objective = sum(
+        history_costs[(occurrence_index, person_index)] * variable
+        for (occurrence_index, person_index), variable in assigned.items()
+    )
+    if any(history_costs.values()):
+        objectives.append(history_objective)
+    if not objectives:
+        objectives.append(0)
+
+    deadline = perf_counter() + 8.0
+    best_assignment: list[int] | None = None
+    for objective_index, objective in enumerate(objectives):
+        remaining_time = deadline - perf_counter()
+        if remaining_time <= 0:
+            break
+        model.minimize(objective)
+        solver.parameters.max_time_in_seconds = remaining_time
+        result = solver.solve(model)
+        if result == cp_model.INFEASIBLE:
+            if best_assignment is None:
+                raise InfeasibleScheduleError(
+                    "No schedule satisfies everyone's busy times and assignment-count rules.\n"
+                    + _schedule_failure_details(people, occurrences, eligibility, rule_by_person)
+                )
+            break
+        if result not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            if best_assignment is not None:
+                break
+            if result == cp_model.UNKNOWN:
+                raise ScheduleSearchLimitError(
+                    "The scheduler did not find a valid assignment within its 8-second search limit, "
+                    "but it could not prove that the configuration is infeasible. Try simplifying "
+                    "the schedule or narrowing eligibility with busy times."
+                )
+            raise ScheduleSearchLimitError(
+                f"The scheduler stopped with solver status {solver.status_name(result)}. "
+                "No schedule was created; review the schedule configuration and try again."
+            )
+
+        best_assignment = [
+            next(
+                person_index
+                for person_index in eligibility[occurrence_index]
+                if solver.boolean_value(assigned[(occurrence_index, person_index)])
+            )
+            for occurrence_index in range(len(occurrences))
+        ]
+        if result != cp_model.OPTIMAL:
+            break
+        if objective_index + 1 < len(objectives) and not isinstance(objective, int):
+            model.add(objective == solver.value(objective))
+
+    if best_assignment is None:
         raise ScheduleSearchLimitError(
-            "The scheduler did not find a schedule within its 8-second search limit, "
+            "The scheduler did not find a valid assignment within its 8-second search limit, "
             "but it could not prove that the configuration is infeasible. Try simplifying "
             "the schedule or narrowing eligibility with busy times."
-        )
-    if result not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        raise ScheduleSearchLimitError(
-            f"The scheduler stopped with solver status {solver.status_name(result)}. "
-            "No schedule was created; review the schedule configuration and try again."
         )
 
     assignments = tuple(
         Assignment(
             occurrence=occurrence,
-            person_name=people[
-                next(
-                    person_index
-                    for person_index in eligibility[occurrence_index]
-                    if solver.boolean_value(assigned[(occurrence_index, person_index)])
-                )
-            ].name,
-                person_id=people[
-                    next(
-                        person_index
-                        for person_index in eligibility[occurrence_index]
-                        if solver.boolean_value(assigned[(occurrence_index, person_index)])
-                    )
-                ].person_id,
+            person_name=people[best_assignment[occurrence_index]].name,
+            person_id=people[best_assignment[occurrence_index]].person_id,
         )
         for occurrence_index, occurrence in enumerate(occurrences)
     )
@@ -738,7 +712,17 @@ def _is_available(person: Person, occurrence: ChoreOccurrence) -> bool:
         key=lambda time_range: time_range.start_minute,
     )
     if occurrence.time_range is not None:
-        return not any(time_range.overlap_minutes(occurrence.time_range) for time_range in busy)
+        window = occurrence.time_range
+        covered_until = window.start_minute
+        for time_range in busy:
+            if time_range.end_minute <= covered_until:
+                continue
+            if time_range.start_minute > covered_until:
+                return True
+            covered_until = max(covered_until, time_range.end_minute)
+            if covered_until >= window.end_minute:
+                return False
+        return covered_until < window.end_minute
 
     covered_until = 0
     for time_range in busy:

@@ -59,6 +59,18 @@ def test_schedule_is_reproducible_for_a_seed():
     assert first.assignments == second.assignments
 
 
+def test_exact_solver_generates_schedule_with_lexicographic_objectives(monkeypatch):
+    monkeypatch.setattr("chore_chart.scheduler._heuristic_schedule", lambda *_args: None)
+    occurrences = [make_occurrence("Dishes"), make_occurrence("Laundry", Weekday.TUESDAY)]
+    people = [Person("Alex"), Person("Sam")]
+    chores = [Chore(item.chore_name, (item,)) for item in occurrences]
+
+    schedule = generate_schedule(people, chores, seed=5)
+
+    assert len(schedule.assignments) == 2
+    assert {item.person_name for item in schedule.assignments} == {"Alex", "Sam"}
+
+
 def test_recent_history_discourages_repeating_person_chore_pairing():
     occurrence = make_occurrence("Dishes")
     people = [make_person("Alex", occurrence), make_person("Sam", occurrence)]
@@ -285,7 +297,7 @@ def test_full_day_busy_time_reports_the_occurrence():
         generate_schedule([person], [Chore("Dishes", (occurrence,))])
 
 
-def test_busy_time_excludes_any_overlap_with_timed_chore():
+def test_partial_busy_overlap_leaves_timed_window_available():
     occurrence = make_occurrence(
         "Dishes",
         time_range=TimeRange.parse("17:00-18:30"),
@@ -294,13 +306,22 @@ def test_busy_time_excludes_any_overlap_with_timed_chore():
         "Alex",
         frozenset({BusyBlock(Weekday.MONDAY, TimeRange.parse("16:00-18:00"), "Appointment")}),
     )
-    free_person = Person(
-        "Sam",
-        frozenset({BusyBlock(Weekday.MONDAY, TimeRange.parse("19:00-20:00"))}),
+    schedule = generate_schedule([busy_person], [Chore("Dishes", (occurrence,))])
+    assert schedule.assignments[0].person_name == "Alex"
+
+
+def test_busy_time_covering_timed_window_excludes_person():
+    occurrence = make_occurrence(
+        "Dishes",
+        time_range=TimeRange.parse("17:00-18:30"),
+    )
+    person = Person(
+        "Alex",
+        frozenset({BusyBlock(Weekday.MONDAY, TimeRange.parse("16:00-19:00"))}),
     )
 
-    schedule = generate_schedule([busy_person, free_person], [Chore("Dishes", (occurrence,))])
-    assert schedule.assignments[0].person_name == "Sam"
+    with pytest.raises(InfeasibleScheduleError, match="No available person"):
+        generate_schedule([person], [Chore("Dishes", (occurrence,))])
 
 
 def test_untimed_chore_allows_partial_busy_time_on_that_weekday():
@@ -323,15 +344,17 @@ def test_untimed_chore_excludes_full_day_busy_time():
         generate_schedule([person], [Chore("Dishes", (occurrence,))])
 
 
-def test_person_is_not_assigned_overlapping_timed_chores():
+def test_person_can_be_assigned_multiple_overlapping_chore_windows():
     first = make_occurrence("Dishes", time_range=TimeRange.parse("17:00-18:00"))
     second = make_occurrence("Laundry", time_range=TimeRange.parse("17:30-18:30"))
 
-    with pytest.raises(InfeasibleScheduleError, match="No schedule satisfies"):
-        generate_schedule(
-            [make_person("Alex", first, second)],
-            [Chore("Dishes", (first,)), Chore("Laundry", (second,))],
-        )
+    schedule = generate_schedule(
+        [make_person("Alex", first, second)],
+        [Chore("Dishes", (first,)), Chore("Laundry", (second,))],
+    )
+
+    assert len(schedule.assignments) == 2
+    assert {item.person_name for item in schedule.assignments} == {"Alex"}
 
 
 def test_same_group_cannot_be_assigned_to_one_person_twice_on_one_day():
