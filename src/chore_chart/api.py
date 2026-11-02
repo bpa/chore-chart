@@ -77,6 +77,15 @@ class GenerateSchedulePayload(BaseModel):
     seed: int | None = None
 
 
+class ScheduleAssignmentPayload(BaseModel):
+    assignment_id: int = Field(ge=1)
+    person_id: int = Field(ge=1)
+
+
+class ScheduleAssignmentsPayload(BaseModel):
+    assignments: list[ScheduleAssignmentPayload]
+
+
 app = FastAPI(title="Chore Chart API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
@@ -155,6 +164,7 @@ def _serialize_schedule(schedule: Any) -> dict[str, Any]:
                 "section": assignment.occurrence.section_name,
                 "section_order": assignment.occurrence.section_order,
                 "chore_order": assignment.occurrence.chore_order,
+                "assignment_id": assignment.assignment_id,
                 "person_id": assignment.person_id,
                 "person": assignment.person_name,
             }
@@ -443,6 +453,24 @@ def get_schedule(schedule_id: int) -> dict[str, Any]:
         return _serialize_schedule(repository.get_schedule(schedule_id))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        repository.close()
+
+
+@app.put("/api/schedules/{schedule_id}/assignments")
+def update_schedule_assignments(
+    schedule_id: int,
+    payload: ScheduleAssignmentsPayload,
+) -> dict[str, Any]:
+    repository = get_repository()
+    try:
+        schedule = repository.update_schedule_assignments(
+            schedule_id,
+            [(item.assignment_id, item.person_id) for item in payload.assignments],
+        )
+        return _serialize_schedule(schedule)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         repository.close()
 

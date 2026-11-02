@@ -118,6 +118,9 @@ input::placeholder { color: #9a9d95; }
 .data-table th,.data-table td,.chart-table th,.chart-table td { padding: 11px 12px; border-bottom: 1px solid var(--line); }
 .data-table thead th,.chart-table thead th { color: var(--muted); background: #f0f2ee; font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .data-table tbody td { color: var(--ink-soft); font-size: 12px; }
+.chore-schedule { white-space: nowrap; }
+.chore-schedule-line { display: block; }
+.chore-schedule-line small { margin-left: 6px; color: var(--muted); font-size: 11px; }
 .chore-table-wrap { max-width: 1100px; overflow-x: auto; }
 .table-actions { white-space: nowrap; text-align: right; }
 .table-actions .text-button { margin-right: 8px; }
@@ -134,6 +137,8 @@ input::placeholder { color: #9a9d95; }
 .chart-table th:first-child { width: 19%; }
 .chart-table tbody th[scope="row"] { color: var(--ink); font-size: 12px; font-weight: 600; }
 .chart-table tbody td { color: var(--green); font-size: 12px; }
+.assignment-editor { width: 100%; padding: 6px; font-size: 11px; }
+.assignment-print-name { display: none; }
 .chart-table tbody .print-group th { padding: 8px 12px; color: var(--ink-soft); background: #f0f2ee; font-size: 10px; font-weight: 700; text-align: left; }
 .chart-table small { display: block; color: var(--muted); font-size: 10px; font-weight: 400; }
 .modal-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(28 39 34 / 45%); }
@@ -212,6 +217,8 @@ input::placeholder { color: #9a9d95; }
   .chart-table tbody .print-group th { background: #f0f2ee !important; text-align: center; font-size: 7pt; }
   .chart-table small { margin-left: 1mm; color: #5e6862; font-size: 6pt; font-weight: 400; }
   .chart-table tbody td { color: #245b49; }
+  .assignment-editor,.chart-table td .person-cell { display: none !important; }
+  .assignment-print-name { display: inline !important; color: #202c29; }
   .person-cell { width: 100%; height: 100%; min-height: 0; color: #202c29 !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
   .person-cell > span { overflow: visible; padding: 0 4px; text-overflow: clip; }
 }

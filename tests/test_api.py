@@ -77,6 +77,8 @@ def test_api_generates_lists_and_exports_saved_schedules(tmp_path, monkeypatch):
     monkeypatch.setenv("CHORE_CHART_DB", str(tmp_path / "schedule.sqlite3"))
     client = TestClient(app)
     client.post("/api/people", json={"name": "Alex"})
+    client.post("/api/people", json={"name": "Blair"})
+    second_person = next(person for person in client.get("/api/people").json() if person["name"] == "Blair")
     section = client.post("/api/sections", json={"name": "Kitchen"}).json()
     client.post(
         "/api/chores",
@@ -101,13 +103,22 @@ def test_api_generates_lists_and_exports_saved_schedules(tmp_path, monkeypatch):
     assert generated.json()["assignments"][0]["label"] == "Kitchen chore"
     assert generated.json()["assignments"][0]["section_id"] == section["section_id"]
     assert generated.json()["assignments"][0]["section"] == "Kitchen"
+    assignment = generated.json()["assignments"][0]
+    assert assignment["assignment_id"] > 0
+    updated = client.put(
+        f"/api/schedules/{schedule_id}/assignments",
+        json={"assignments": [{"assignment_id": assignment["assignment_id"], "person_id": second_person["person_id"]}]},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["assignments"][0]["person"] == "Blair"
     assert client.get("/api/schedules").json()[0]["schedule_id"] == schedule_id
-    assert client.get(f"/api/schedules/{schedule_id}").json() == generated.json()
+    assert client.get(f"/api/schedules/{schedule_id}").json() == updated.json()
 
     csv_response = client.get(f"/api/schedules/{schedule_id}/csv")
     assert csv_response.status_code == 200
     assert csv_response.content.startswith(b"\xef\xbb\xbf")
     assert "Kitchen chore" in csv_response.text
+    assert "Blair" in csv_response.text
     assert "Dishes" not in csv_response.text
 
 

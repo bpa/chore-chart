@@ -47,7 +47,7 @@ function buildPrintGroups(assignments) {
         peopleByWeekday: {},
       })
     }
-    rows.get(key).peopleByWeekday[assignment.weekday] = assignment.person
+    rows.get(key).peopleByWeekday[assignment.weekday] = assignment
   })
 
   return [...groups.values()]
@@ -78,6 +78,18 @@ function scheduleBlocksFromChore(chore) {
     grouped.get(key).days.push(occurrence.weekday)
   })
   return [...grouped.values()]
+}
+
+function choreScheduleGroups(occurrences) {
+  const grouped = new Map()
+  occurrences.forEach(({ weekday, time_range }) => {
+    if (!grouped.has(time_range)) grouped.set(time_range, new Set())
+    grouped.get(time_range).add(weekday)
+  })
+  return [...grouped].map(([timeRange, days]) => ({
+    timeRange,
+    days: WEEKDAYS.filter((weekday) => days.has(weekday)),
+  }))
 }
 
 function scheduleBlocksToOccurrences(blocks) {
@@ -211,6 +223,8 @@ function App() {
   const [rules, setRules] = useState([])
   const [schedules, setSchedules] = useState([])
   const [schedule, setSchedule] = useState(null)
+  const [editingSchedule, setEditingSchedule] = useState(false)
+  const [editAssignments, setEditAssignments] = useState({})
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [activeTab, setActiveTab] = useState('charts')
@@ -461,6 +475,8 @@ function App() {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
     })
     setSchedule(generated)
+    setEditingSchedule(false)
+    setEditAssignments({})
     await refresh()
     setSchedule(generated)
     setMessage(`Generated schedule ${generated.schedule_id}`)
@@ -468,6 +484,32 @@ function App() {
 
   const selectSchedule = (event) => run(async () => {
     setSchedule(await request(`/schedules/${event.target.value}`))
+    setEditingSchedule(false)
+    setEditAssignments({})
+  })
+
+  const startScheduleEdit = () => {
+    setEditAssignments(Object.fromEntries(
+      schedule.assignments.map(({ assignment_id, person_id }) => [assignment_id, person_id]),
+    ))
+    setEditingSchedule(true)
+  }
+
+  const saveScheduleEdit = () => run(async () => {
+    const updated = await request(`/schedules/${schedule.schedule_id}/assignments`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        assignments: schedule.assignments.map((assignment) => ({
+          assignment_id: assignment.assignment_id,
+          person_id: Number(editAssignments[assignment.assignment_id] ?? assignment.person_id),
+        })),
+      }),
+    })
+    setSchedule(updated)
+    setSchedules((current) => current.map((item) => item.schedule_id === updated.schedule_id ? updated : item))
+    setEditingSchedule(false)
+    setEditAssignments({})
+    setMessage(`Updated chart #${updated.schedule_id}`)
   })
 
   const downloadCsv = async () => {
@@ -485,7 +527,14 @@ function App() {
     } catch (error) { setMessage(error.message) } finally { setBusy(false) }
   }
 
-  const printGroups = buildPrintGroups(schedule?.assignments ?? [])
+  const displayedAssignments = (schedule?.assignments ?? []).map((assignment) => {
+    const personId = editingSchedule
+      ? Number(editAssignments[assignment.assignment_id] ?? assignment.person_id)
+      : assignment.person_id
+    const person = people.find((item) => item.person_id === personId)
+    return { ...assignment, person_id: personId, person: person?.name ?? assignment.person }
+  })
+  const printGroups = buildPrintGroups(displayedAssignments)
 
   return (
     <main className="workspace">
@@ -608,7 +657,7 @@ function App() {
 
         <div className="chore-table-wrap">
           <table className="data-table">
-            <thead><tr><th aria-hidden="true" /><th>Name</th><th>Label</th><th>Days</th><th><span className="sr-only">Actions</span></th></tr></thead>
+            <thead><tr><th aria-hidden="true" /><th>Name</th><th>Label</th><th>Schedule</th><th><span className="sr-only">Actions</span></th></tr></thead>
             {sections.map((section) => <tbody key={section.section_id}>
               <tr
                 className="section-drop-row"
@@ -646,7 +695,12 @@ function App() {
                     type="button"
                   >⠿</button></td>
                   <td>{chore.name}</td><td>{chore.label}</td>
-                  <td>{[...new Set(chore.occurrences.map((item) => item.weekday))].map((day) => day.slice(0, 3)).join(', ')}</td>
+                  <td className="chore-schedule">{choreScheduleGroups(chore.occurrences).map(({ timeRange, days }) => (
+                    <span className="chore-schedule-line" key={timeRange ?? 'anytime'}>
+                      {days.map((day) => day.slice(0, 3)).join(', ')}
+                      {timeRange && <small>{timeRange}</small>}
+                    </span>
+                  ))}</td>
                   <td className="table-actions"><button className="text-button" type="button" onClick={() => openChoreEditor(chore)}>Edit</button><button className="remove-button" type="button" onClick={() => deleteChore(chore)} aria-label={`Delete ${chore.label}`} title="Delete chore">×</button></td>
                 </tr>
               ))}
@@ -669,6 +723,12 @@ function App() {
       {activeTab === 'charts' && <section className="tab-panel charts-panel" id="charts-panel" role="tabpanel" aria-labelledby="charts-tab">
         <div className="panel-heading"><div><p className="eyebrow">WEEKLY ASSIGNMENTS</p><h2>Chart</h2></div>
           <div className="schedule-actions">
+            {schedule && (editingSchedule
+              ? <>
+                <button className="outline-button" type="button" onClick={() => { setEditingSchedule(false); setEditAssignments({}) }} disabled={busy}>Cancel</button>
+                <button className="save-button" type="button" onClick={saveScheduleEdit} disabled={busy || !people.length}>Save changes</button>
+              </>
+              : <button className="outline-button" type="button" onClick={startScheduleEdit} disabled={busy || !people.length}>Edit chart</button>)}
             <button className="outline-button" type="button" onClick={downloadCsv} disabled={!schedule || busy} title="Download CSV">↓ <span>CSV</span></button>
             <button className="outline-button" type="button" onClick={() => window.print()} disabled={!schedule} title="Print chart">▤ <span>Print</span></button>
             <button className="generate-button" type="button" onClick={generateSchedule} disabled={!people.length || !chores.length || busy}>{busy ? 'Working…' : 'Generate'} <span aria-hidden="true">↗</span></button>
@@ -691,9 +751,22 @@ function App() {
               {group.rows.map((row) => <tr key={row.choreId}>
                 <th scope="row">{row.label}</th>
                 {WEEKDAYS.map((weekday) => {
-                  const personName = row.peopleByWeekday[weekday]
-                  const person = people.find((item) => item.name === personName)
-                  return <td key={weekday}>{personName && <PersonCell person={person ?? { name: personName, cell_color: '#e7f1ec', cell_color_mid: null, cell_color_end: '#dce8f1', cell_fill: 'solid' }} />}</td>
+                  const assignment = row.peopleByWeekday[weekday]
+                  const person = people.find((item) => item.person_id === assignment?.person_id)
+                  return <td key={weekday}>{assignment && <>
+                    {editingSchedule
+                      ? <select
+                        aria-label={`Change person for ${row.label}, ${weekday}`}
+                        className="assignment-editor"
+                        value={assignment.person_id}
+                        onChange={(event) => setEditAssignments((current) => ({
+                          ...current,
+                          [assignment.assignment_id]: Number(event.target.value),
+                        }))}
+                      >{people.map((item) => <option key={item.person_id} value={item.person_id}>{item.name}</option>)}</select>
+                      : <PersonCell person={person ?? { name: assignment.person, cell_color: '#e7f1ec', cell_color_mid: null, cell_color_end: '#dce8f1', cell_fill: 'solid' }} />}
+                    <span className="assignment-print-name">{assignment.person}</span>
+                  </>}</td>
                 })}
               </tr>)}
             </tbody>)}

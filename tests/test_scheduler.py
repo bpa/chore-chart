@@ -190,6 +190,40 @@ def test_section_workload_is_spread_across_people():
     assert all(sorted(people) == ["Alex", "Sam"] for people in assignments_by_section.values())
 
 
+def test_lunch_workload_is_not_absorbed_by_other_sections():
+    people = [
+        Person(
+            name,
+            frozenset(
+                BusyBlock(weekday, TimeRange(8 * 60, 20 * 60))
+                for weekday in (Weekday.MONDAY, Weekday.TUESDAY, Weekday.WEDNESDAY)
+            ) if name == "Eliza" else frozenset(),
+        )
+        for name in ("Alex", "Christian", "Dad", "Eliza", "Liam", "Percy")
+    ]
+    chores = []
+    section_counts = {"Anytime": 72, "Lunch": 42, "Dinner": 49}
+    section_times = {"Anytime": None, "Lunch": TimeRange(12 * 60, 13 * 60), "Dinner": TimeRange(20 * 60, 21 * 60)}
+    for section, count in section_counts.items():
+        for index in range(count):
+            weekday = list(Weekday)[index % len(Weekday)]
+            occurrence = ChoreOccurrence(
+                f"{section}_{index}",
+                weekday,
+                section,
+                time_range=section_times[section],
+            )
+            chores.append(Chore(occurrence.chore_name, (occurrence,)))
+
+    schedule = generate_schedule(people, chores, seed=1)
+
+    eliza_lunch_assignments = sum(
+        assignment.person_name == "Eliza" and assignment.occurrence.section_name == "Lunch"
+        for assignment in schedule.assignments
+    )
+    assert 3 <= eliza_lunch_assignments <= 6
+
+
 def test_daily_workload_is_spread_when_weekly_totals_are_already_balanced():
     occurrences = [
         make_occurrence("monday_a", Weekday.MONDAY, "Section A"),

@@ -1013,10 +1013,38 @@ class SQLiteRepository:
                     ),
                     person_name=person.name,
                     person_id=person.id,
+                    assignment_id=assignment.id,
                 )
                 for assignment, chore, person, section in assignments
             ),
         )
+
+    def update_schedule_assignments(
+        self,
+        schedule_id: int,
+        assignments: Sequence[tuple[int, int]],
+    ) -> Schedule:
+        assignment_ids = [assignment_id for assignment_id, _ in assignments]
+        if len(assignment_ids) != len(set(assignment_ids)):
+            raise ValueError("Each schedule assignment can only be updated once.")
+        with self._sessions.begin() as session:
+            if session.get(ScheduleRecord, schedule_id) is None:
+                raise ValueError(f"No saved schedule with id {schedule_id}.")
+            records = session.scalars(
+                select(AssignmentRecord).where(AssignmentRecord.schedule_id == schedule_id)
+            ).all()
+            records_by_id = {record.id: record for record in records}
+            if set(assignment_ids) != records_by_id.keys():
+                raise ValueError("Assignments must include every assignment in this schedule.")
+            person_ids = {person_id for _, person_id in assignments}
+            existing_person_ids = set(
+                session.scalars(select(PersonRecord.id).where(PersonRecord.id.in_(person_ids))).all()
+            ) if person_ids else set()
+            if person_ids != existing_person_ids:
+                raise ValueError("One or more selected people do not exist.")
+            for assignment_id, person_id in assignments:
+                records_by_id[assignment_id].person_id = person_id
+        return self.get_schedule(schedule_id)
 
     def list_schedules(self, limit: int = 20) -> list[Schedule]:
         with self._sessions() as session:

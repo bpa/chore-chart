@@ -244,6 +244,7 @@ class Assignment:
     occurrence: ChoreOccurrence
     person_name: str
     person_id: int | None = None
+    assignment_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
