@@ -240,6 +240,27 @@ class AssignmentRule:
 
 
 @dataclass(frozen=True, slots=True)
+class ChoreAssignmentRule:
+    person_name: str
+    chore_name: str
+    weekday: Weekday
+    is_assigned: bool
+    rule_id: int | None = None
+
+    def __post_init__(self) -> None:
+        person_name = self.person_name.strip()
+        chore_name = normalize_chore_text(self.chore_name)
+        if not person_name:
+            raise ValueError("Rule must name a person.")
+        if not chore_name:
+            raise ValueError("Rule must name a chore.")
+        if not isinstance(self.weekday, Weekday):
+            raise ValueError("Rule must use a valid weekday.")
+        object.__setattr__(self, "person_name", person_name)
+        object.__setattr__(self, "chore_name", chore_name)
+
+
+@dataclass(frozen=True, slots=True)
 class Assignment:
     occurrence: ChoreOccurrence
     person_name: str

@@ -122,6 +122,85 @@ def test_api_generates_lists_and_exports_saved_schedules(tmp_path, monkeypatch):
     assert "Dishes" not in csv_response.text
 
 
+def test_api_chore_rules_constrain_generation_and_manual_edits(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHORE_CHART_DB", str(tmp_path / "assignment-rules.sqlite3"))
+    client = TestClient(app)
+    client.post("/api/people", json={"name": "Alex"})
+    client.post("/api/people", json={"name": "Sam"})
+    section = client.post("/api/sections", json={"name": "Kitchen"}).json()
+    client.post(
+        "/api/chores",
+        json={
+            "name": "Dishes",
+            "section_id": section["section_id"],
+            "occurrences": [{"weekday": "Monday"}],
+        },
+    )
+    client.post(
+        "/api/chores",
+        json={
+            "name": "Laundry",
+            "section_id": section["section_id"],
+            "occurrences": [{"weekday": "Tuesday"}],
+        },
+    )
+    client.post(
+        "/api/chores",
+        json={
+            "name": "Sweep",
+            "section_id": section["section_id"],
+            "occurrences": [{"weekday": "Wednesday"}],
+        },
+    )
+
+    fixed_rule = client.post(
+        "/api/assignment-rules",
+        json={"person": "Alex", "operation": "is_assigned", "chore": "Dishes", "weekday": "Monday"},
+    )
+    prohibited_rule = client.post(
+        "/api/assignment-rules",
+        json={"person": "Alex", "operation": "may_not_be_assigned", "chore": "Laundry", "weekday": "Tuesday"},
+    )
+    assert fixed_rule.status_code == 200
+    assert prohibited_rule.status_code == 200
+    assert len(client.get("/api/assignment-rules").json()) == 2
+
+    generated = client.post("/api/schedules/generate", json={}).json()
+    assignments = {item["chore"]: item for item in generated["assignments"]}
+    assert assignments["Dishes"]["person"] == "Alex"
+    assert assignments["Laundry"]["person"] == "Sam"
+
+    changed_fixed_assignment = client.put(
+        f"/api/schedules/{generated['schedule_id']}/assignments",
+        json={
+            "assignments": [
+                {"assignment_id": assignments["Dishes"]["assignment_id"], "person_id": 2},
+                {"assignment_id": assignments["Laundry"]["assignment_id"], "person_id": 2},
+                {"assignment_id": assignments["Sweep"]["assignment_id"], "person_id": 2},
+            ]
+        },
+    )
+    assert changed_fixed_assignment.status_code == 400
+    assert "fixed" in changed_fixed_assignment.json()["detail"]
+
+    other_person_id = 2 if assignments["Sweep"]["person_id"] == 1 else 1
+    updated_schedule = client.put(
+        f"/api/schedules/{generated['schedule_id']}/assignments",
+        json={
+            "assignments": [
+                {"assignment_id": assignments["Dishes"]["assignment_id"], "person_id": 1},
+                {"assignment_id": assignments["Laundry"]["assignment_id"], "person_id": 2},
+                {"assignment_id": assignments["Sweep"]["assignment_id"], "person_id": other_person_id},
+            ]
+        },
+    )
+    assert updated_schedule.status_code == 200
+    assert next(item for item in updated_schedule.json()["assignments"] if item["chore"] == "Sweep")["person_id"] == other_person_id
+
+    assert client.delete(f"/api/assignment-rules/{fixed_rule.json()['rule_id']}").status_code == 200
+    assert len(client.get("/api/assignment-rules").json()) == 1
+
+
 def test_api_explains_why_schedule_generation_failed(tmp_path, monkeypatch):
     monkeypatch.setenv("CHORE_CHART_DB", str(tmp_path / "infeasible.sqlite3"))
     client = TestClient(app)

@@ -11,6 +11,7 @@ from ortools.sat.python import cp_model
 from chore_chart.domain import (
     Assignment,
     AssignmentRule,
+    ChoreAssignmentRule,
     Chore,
     ChoreOccurrence,
     Person,
@@ -463,6 +464,7 @@ def generate_schedule(
     rules: Iterable[AssignmentRule] = (),
     history: Sequence[Schedule] = (),
     seed: int | None = None,
+    assignment_rules: Iterable[ChoreAssignmentRule] = (),
 ) -> Schedule:
     if not people:
         raise InfeasibleScheduleError("Add at least one person before generating a schedule.")
@@ -497,6 +499,22 @@ def generate_schedule(
     if unknown_people:
         raise ValueError(f"Rules refer to unknown people: {', '.join(sorted(unknown_people))}.")
 
+    chore_assignment_rules = tuple(assignment_rules)
+    unknown_rule_people = {rule.person_name for rule in chore_assignment_rules} - set(person_names)
+    if unknown_rule_people:
+        raise ValueError(
+            f"Assignment rules refer to unknown people: {', '.join(sorted(unknown_rule_people))}."
+        )
+    chore_by_name = {chore.name.casefold(): chore for chore in chores}
+    unknown_rule_chores = {
+        rule.chore_name for rule in chore_assignment_rules
+        if rule.chore_name.casefold() not in chore_by_name
+    }
+    if unknown_rule_chores:
+        raise ValueError(
+            f"Assignment rules refer to unknown chores: {', '.join(sorted(unknown_rule_chores))}."
+        )
+
     eligibility: dict[int, list[int]] = {}
     for occurrence_index, occurrence in enumerate(occurrences):
         eligible_people = [
@@ -515,6 +533,35 @@ def generate_schedule(
                 f"{occurrence.weekday.value} ({time_description}); at least one hour of overlap is required."
             )
         eligibility[occurrence_index] = eligible_people
+
+    person_indices = {person.name: index for index, person in enumerate(people)}
+    for constraint in chore_assignment_rules:
+        matching_indices = [
+            index for index, occurrence in enumerate(occurrences)
+            if occurrence.chore_name.casefold() == constraint.chore_name.casefold()
+            and occurrence.weekday == constraint.weekday
+        ]
+        person_index = person_indices[constraint.person_name]
+        for occurrence_index in matching_indices:
+            candidates = eligibility[occurrence_index]
+            if constraint.is_assigned:
+                if person_index not in candidates:
+                    occurrence = occurrences[occurrence_index]
+                    raise InfeasibleScheduleError(
+                        f"{constraint.person_name} must be assigned {occurrence.chore_name} on "
+                        f"{occurrence.weekday.value}, but they are unavailable."
+                    )
+                eligibility[occurrence_index] = [person_index]
+            else:
+                eligibility[occurrence_index] = [
+                    candidate for candidate in candidates if candidate != person_index
+                ]
+                if not eligibility[occurrence_index]:
+                    occurrence = occurrences[occurrence_index]
+                    raise InfeasibleScheduleError(
+                        f"No available person for {occurrence.chore_name} on "
+                        f"{occurrence.weekday.value}; all eligible people are prohibited."
+                    )
 
     heuristic_result = _heuristic_schedule(
         people,

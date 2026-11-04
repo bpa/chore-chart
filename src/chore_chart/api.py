@@ -73,6 +73,13 @@ class AssignmentRulePayload(BaseModel):
     maximum: int | None = Field(default=None, ge=0)
 
 
+class ChoreAssignmentRulePayload(BaseModel):
+    person: str
+    operation: Literal["is_assigned", "may_not_be_assigned"]
+    chore: str
+    weekday: str
+
+
 class GenerateSchedulePayload(BaseModel):
     seed: int | None = None
 
@@ -421,6 +428,59 @@ def update_rule(person_name: str, payload: AssignmentRulePayload) -> dict[str, A
         }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        repository.close()
+
+
+@app.get("/api/assignment-rules")
+def list_chore_assignment_rules() -> list[dict[str, Any]]:
+    repository = get_repository()
+    try:
+        return [
+            {
+                "rule_id": rule.rule_id,
+                "person": rule.person_name,
+                "operation": "is_assigned" if rule.is_assigned else "may_not_be_assigned",
+                "chore": rule.chore_name,
+                "weekday": rule.weekday.value,
+            }
+            for rule in repository.list_chore_assignment_rules()
+        ]
+    finally:
+        repository.close()
+
+
+@app.post("/api/assignment-rules")
+def create_chore_assignment_rule(payload: ChoreAssignmentRulePayload) -> dict[str, Any]:
+    repository = get_repository()
+    try:
+        rule = repository.set_chore_assignment_rule(
+            payload.person,
+            payload.chore,
+            Weekday.parse(payload.weekday),
+            payload.operation == "is_assigned",
+        )
+        return {
+            "rule_id": rule.rule_id,
+            "person": rule.person_name,
+            "operation": "is_assigned" if rule.is_assigned else "may_not_be_assigned",
+            "chore": rule.chore_name,
+            "weekday": rule.weekday.value,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        repository.close()
+
+
+@app.delete("/api/assignment-rules/{rule_id}")
+def delete_chore_assignment_rule(rule_id: int) -> dict[str, int]:
+    repository = get_repository()
+    try:
+        repository.delete_chore_assignment_rule(rule_id)
+        return {"rule_id": rule_id}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     finally:
         repository.close()
 

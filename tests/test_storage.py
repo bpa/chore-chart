@@ -149,6 +149,24 @@ def test_rules_round_trip_and_update(repository):
         repository.set_rule("Sam", 0, 1)
 
 
+def test_chore_assignment_rules_round_trip_update_and_delete(repository):
+    repository.add_person("Alex")
+    repository.add_person("Sam")
+    repository.add_chore("Dishes", [ChoreOccurrence("Dishes", Weekday.MONDAY, "Kitchen")])
+
+    rule = repository.set_chore_assignment_rule("Alex", "Dishes", Weekday.MONDAY, True)
+    assert rule.rule_id is not None
+    updated = repository.set_chore_assignment_rule("Alex", "Dishes", Weekday.MONDAY, False)
+    assert updated.rule_id == rule.rule_id
+    assert repository.list_chore_assignment_rules() == [updated]
+    repository.delete_chore_assignment_rule(rule.rule_id)
+    assert repository.list_chore_assignment_rules() == []
+
+    repository.set_chore_assignment_rule("Alex", "Dishes", Weekday.MONDAY, True)
+    with pytest.raises(ValueError, match="Another person is already required"):
+        repository.set_chore_assignment_rule("Sam", "Dishes", Weekday.MONDAY, True)
+
+
 def test_schedule_generation_persists_history_and_can_be_exported_again(repository):
     repository.add_person("Alex")
     repository.add_person("Sam")

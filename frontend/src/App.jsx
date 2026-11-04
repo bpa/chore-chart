@@ -6,7 +6,7 @@ const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satur
 const TABS = [
   { id: 'people', label: 'People' },
   { id: 'chores', label: 'Chores' },
-  { id: 'limits', label: 'Limits' },
+  { id: 'rules', label: 'Rules' },
   { id: 'charts', label: 'Charts' },
 ]
 const LINEAR_GRADIENTS = {
@@ -235,6 +235,7 @@ function App() {
   const [sections, setSections] = useState([])
   const [chores, setChores] = useState([])
   const [rules, setRules] = useState([])
+  const [assignmentRules, setAssignmentRules] = useState([])
   const [schedules, setSchedules] = useState([])
   const [schedule, setSchedule] = useState(null)
   const [editingSchedule, setEditingSchedule] = useState(false)
@@ -263,10 +264,17 @@ function App() {
   const [rulePerson, setRulePerson] = useState('')
   const [ruleMinimum, setRuleMinimum] = useState('0')
   const [ruleMaximum, setRuleMaximum] = useState('')
+  const [noLimits, setNoLimits] = useState(true)
+  const [editingLimitPerson, setEditingLimitPerson] = useState('')
+  const [assignmentPerson, setAssignmentPerson] = useState('')
+  const [assignmentOperation, setAssignmentOperation] = useState('is_assigned')
+  const [assignmentChore, setAssignmentChore] = useState('')
+  const [assignmentWeekday, setAssignmentWeekday] = useState('Monday')
 
   const refresh = async () => {
-    const [peopleData, sectionData, choreData, ruleData, scheduleData] = await Promise.all([
-      request('/people'), request('/sections'), request('/chores'), request('/rules'), request('/schedules?limit=20'),
+    const [peopleData, sectionData, choreData, ruleData, assignmentRuleData, scheduleData] = await Promise.all([
+      request('/people'), request('/sections'), request('/chores'), request('/rules'),
+      request('/assignment-rules'), request('/schedules?limit=20'),
     ])
     setPeople(peopleData)
     setSections(sectionData)
@@ -275,6 +283,7 @@ function App() {
     }])))
     setChores(choreData)
     setRules(ruleData)
+    setAssignmentRules(assignmentRuleData)
     setSchedules(scheduleData)
     setSchedule((current) => current ?? scheduleData[0] ?? null)
     setChoreSectionId((current) => current || String(sectionData[0]?.section_id ?? ''))
@@ -386,6 +395,15 @@ function App() {
     })
   }
 
+  const openPersonLimits = (person) => {
+    const rule = rules.find((item) => item.person === person.name)
+    setRulePerson(person.name)
+    setRuleMinimum(String(rule?.minimum ?? 0))
+    setRuleMaximum(rule?.maximum == null ? '' : String(rule.maximum))
+    setNoLimits(!rule || (rule.minimum === 0 && rule.maximum == null))
+    setEditingLimitPerson(person.name)
+  }
+
   const savePersonStyle = (event, person) => {
     event.preventDefault()
     run(async () => {
@@ -477,12 +495,39 @@ function App() {
     run(async () => {
       const rule = await request(`/rules/${encodeURIComponent(rulePerson)}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ minimum: Number(ruleMinimum), maximum: ruleMaximum === '' ? null : Number(ruleMaximum) }),
+        body: JSON.stringify({
+          minimum: noLimits ? 0 : Number(ruleMinimum),
+          maximum: noLimits || ruleMaximum === '' ? null : Number(ruleMaximum),
+        }),
       })
       await refresh()
+      setEditingLimitPerson('')
       setMessage(`Updated assignment limits for ${rule.person}`)
     })
   }
+
+  const saveAssignmentRule = (event) => {
+    event.preventDefault()
+    run(async () => {
+      await request('/assignment-rules', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          person: assignmentPerson,
+          operation: assignmentOperation,
+          chore: assignmentChore,
+          weekday: assignmentWeekday,
+        }),
+      })
+      await refresh()
+      setMessage('Rule saved')
+    })
+  }
+
+  const deleteAssignmentRule = (rule) => run(async () => {
+    await request(`/assignment-rules/${rule.rule_id}`, { method: 'DELETE' })
+    await refresh()
+    setMessage('Rule removed')
+  })
 
   const generateSchedule = () => run(async () => {
     const generated = await request('/schedules/generate', {
@@ -550,6 +595,8 @@ function App() {
   })
   const printGroups = buildPrintGroups(displayedAssignments)
   const scheduleTallies = tallyAssignments(displayedAssignments, people)
+  const editingStylePerson = people.find((person) => person.person_id === stylePersonId)
+  const editingBusyPerson = people.find((person) => person.name === busyTimesPerson)
 
   return (
     <main className="workspace">
@@ -583,31 +630,52 @@ function App() {
             <button className="icon-button add-button" type="submit" disabled={busy} aria-label="Add person" title="Add person">+</button>
           </form>
         </div>
-        {people.length ? <ul className="people-list">{people.map((person) => (
-          <li className="person-item" key={person.person_id}>
-            <div className="person-row">
-              <PersonCell person={person} />
-              <span className="person-name">{person.name}</span>
-              <button className="text-button" type="button" onClick={() => openPersonStyle(person)}>{stylePersonId === person.person_id ? 'Editing style' : 'Cell style'}</button>
-              <button className="text-button" type="button" onClick={() => openBusyTimes(person)}>{busyTimesPerson === person.name ? 'Editing busy times' : 'Busy times'}</button>
-            </div>
-            {stylePersonId === person.person_id && <form className="editor person-style-editor" onSubmit={(event) => savePersonStyle(event, person)}>
-              <div className="person-style-preview"><PersonCell person={{ ...person, ...styleDraft }} /></div>
-              <label className="field-label"><span>Fill</span><select aria-label={`${person.name} cell fill`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_fill: event.target.value })} value={styleDraft.cell_fill}>
-                <option value="solid">Solid</option><option value="linear-horizontal">Linear: horizontal</option><option value="linear-vertical">Linear: vertical</option><option value="linear-diagonal-down">Linear: diagonal down</option><option value="linear-diagonal-up">Linear: diagonal up</option><option value="radial">Radial gradient</option>
-              </select></label>
-              <label className="field-label"><span>{styleDraft.cell_fill === 'solid' ? 'Background' : 'Start color'}</span><input aria-label={`${person.name} cell start color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color: event.target.value })} type="color" value={styleDraft.cell_color} /></label>
-              {styleDraft.cell_fill !== 'solid' && <label className="field-label"><span>End color</span><input aria-label={`${person.name} cell end color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_end: event.target.value })} type="color" value={styleDraft.cell_color_end} /></label>}
-              {styleDraft.cell_fill.startsWith('linear-') && <label className="field-label midpoint-color">
-                <span><input aria-label={`${person.name} add middle color`} checked={Boolean(styleDraft.cell_color_mid)} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_mid: event.target.checked ? '#b7c9dc' : null })} type="checkbox" />Middle color</span>
-                {styleDraft.cell_color_mid && <input aria-label={`${person.name} cell middle color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_mid: event.target.value })} type="color" value={styleDraft.cell_color_mid} />}
-              </label>}
-              <div className="person-style-actions"><button className="save-button" type="submit" disabled={busy}>Save style</button><button className="text-button" type="button" onClick={() => setStylePersonId(null)}>Cancel</button></div>
-            </form>}
-          </li>
-        ))}</ul> : <p className="empty-note">No people yet.</p>}
+        {people.length ? <div className="people-table-wrap"><table className="data-table people-table">
+          <thead><tr><th>Person</th><th>Busy times</th><th>Limits</th></tr></thead>
+          <tbody>{people.map((person) => {
+            const limits = rules.find((rule) => rule.person === person.name)
+            const busySummary = person.busy_times.length
+              ? person.busy_times.map((block) => `${block.weekday.slice(0, 3)} ${block.time_range}`).join(' · ')
+              : 'None'
+            const limitSummary = !limits || (limits.minimum === 0 && limits.maximum == null)
+              ? 'No limits'
+              : `${limits.minimum} min · ${limits.maximum ?? 'No max'}`
+            return <tr key={person.person_id}>
+              <td><div className="person-identity">
+                <PersonCell person={person} />
+                <button className="cell-style-edit" type="button" onClick={() => openPersonStyle(person)} aria-label={`Edit cell style for ${person.name}`} title={`Edit cell style for ${person.name}`}>
+                  <span className="edit-action-symbol" aria-hidden="true">✎</span>
+                </button>
+                <span className="person-name">{person.name}</span>
+              </div></td>
+              <td><div className="person-data-cell"><span className="person-summary">{busySummary}</span><button className="icon-edit-button" type="button" onClick={() => openBusyTimes(person)} aria-label={`Edit busy times for ${person.name}`} title={`Edit busy times for ${person.name}`}>✎</button></div></td>
+              <td><div className="person-data-cell"><span className="person-summary">{limitSummary}</span><button className="icon-edit-button" type="button" onClick={() => openPersonLimits(person)} aria-label={`Edit limits for ${person.name}`} title={`Edit limits for ${person.name}`}>✎</button></div></td>
+            </tr>
+          })}</tbody>
+        </table></div> : <p className="empty-note">No people yet.</p>}
+        {editingStylePerson && <form className="editor person-style-editor" onSubmit={(event) => savePersonStyle(event, editingStylePerson)}>
+          <div className="editor-title"><strong>{editingStylePerson.name} · Cell style</strong><button type="button" className="close-button" onClick={() => setStylePersonId(null)} aria-label="Close cell style editor">×</button></div>
+          <div className="person-style-preview"><PersonCell person={{ ...editingStylePerson, ...styleDraft }} /></div>
+          <label className="field-label"><span>Fill</span><select aria-label={`${editingStylePerson.name} cell fill`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_fill: event.target.value })} value={styleDraft.cell_fill}>
+            <option value="solid">Solid</option><option value="linear-horizontal">Linear: horizontal</option><option value="linear-vertical">Linear: vertical</option><option value="linear-diagonal-down">Linear: diagonal down</option><option value="linear-diagonal-up">Linear: diagonal up</option><option value="radial">Radial gradient</option>
+          </select></label>
+          <label className="field-label"><span>{styleDraft.cell_fill === 'solid' ? 'Background' : 'Start color'}</span><input aria-label={`${editingStylePerson.name} cell start color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color: event.target.value })} type="color" value={styleDraft.cell_color} /></label>
+          {styleDraft.cell_fill !== 'solid' && <label className="field-label"><span>End color</span><input aria-label={`${editingStylePerson.name} cell end color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_end: event.target.value })} type="color" value={styleDraft.cell_color_end} /></label>}
+          {styleDraft.cell_fill.startsWith('linear-') && <label className="field-label midpoint-color">
+            <span><input aria-label={`${editingStylePerson.name} add middle color`} checked={Boolean(styleDraft.cell_color_mid)} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_mid: event.target.checked ? '#b7c9dc' : null })} type="checkbox" />Middle color</span>
+            {styleDraft.cell_color_mid && <input aria-label={`${editingStylePerson.name} cell middle color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_mid: event.target.value })} type="color" value={styleDraft.cell_color_mid} />}
+          </label>}
+          <div className="person-style-actions"><button className="save-button" type="submit" disabled={busy}>Save style</button><button className="text-button" type="button" onClick={() => setStylePersonId(null)}>Cancel</button></div>
+        </form>}
+        {editingLimitPerson && <form className="editor limit-form person-limit-editor" onSubmit={saveRule}>
+          <div className="editor-title"><strong>{editingLimitPerson} · Assignment limits</strong><button type="button" className="close-button" onClick={() => setEditingLimitPerson('')} aria-label="Close limits editor">×</button></div>
+          <label className="no-limits-control"><input type="checkbox" checked={noLimits} onChange={(event) => setNoLimits(event.target.checked)} /><span>No limits</span></label>
+          <label className="field-label"><span>Minimum</span><input type="number" min="0" disabled={noLimits} value={ruleMinimum} onChange={(event) => { setRuleMinimum(event.target.value); setNoLimits(false) }} /></label>
+          <label className="field-label"><span>Maximum <small>optional</small></span><input type="number" min={ruleMinimum} disabled={noLimits} value={ruleMaximum} onChange={(event) => { setRuleMaximum(event.target.value); setNoLimits(false) }} placeholder="No limit" /></label>
+          <button className="save-button" type="submit" disabled={busy}>Save limits</button>
+        </form>}
         {busyTimesPerson && <form className="editor busy-times-editor" onSubmit={saveBusyTimes}>
-          <div className="editor-title"><strong>{busyTimesPerson} · Busy times</strong><button type="button" className="close-button" onClick={() => setBusyTimesPerson('')} aria-label="Close busy times editor">×</button></div>
+          <div className="editor-title"><strong>{editingBusyPerson?.name ?? busyTimesPerson} · Busy times</strong><button type="button" className="close-button" onClick={() => setBusyTimesPerson('')} aria-label="Close busy times editor">×</button></div>
           <div className="slot-list">{busyTimes.map((block, index) => (
             <div className="slot-row" key={`${block.weekday}-${block.time_range}-${index}`}><span>{block.weekday}</span><span>{block.time_range}</span><span>{block.label}</span><button type="button" className="remove-button" onClick={() => setBusyTimes(busyTimes.filter((_, blockIndex) => blockIndex !== index))} aria-label={`Remove ${block.weekday} busy time`}>×</button></div>
           ))}</div>
@@ -724,15 +792,27 @@ function App() {
         </div>
       </section>}
 
-      {activeTab === 'limits' && <section className="tab-panel" id="limits-panel" role="tabpanel" aria-labelledby="limits-tab">
-        <div className="panel-heading"><div><p className="eyebrow">FAIR ROTATION</p><h2>Assignment limits</h2></div></div>
-        <form className="limit-form" onSubmit={saveRule}>
-          <label className="field-label"><span>Person</span><select value={rulePerson} onChange={(event) => setRulePerson(event.target.value)} required><option value="">Choose person</option>{people.map((person) => <option key={person.person_id} value={person.name}>{person.name}</option>)}</select></label>
-          <label className="field-label"><span>Minimum</span><input type="number" min="0" value={ruleMinimum} onChange={(event) => setRuleMinimum(event.target.value)} /></label>
-          <label className="field-label"><span>Maximum <small>optional</small></span><input type="number" min={ruleMinimum} value={ruleMaximum} onChange={(event) => setRuleMaximum(event.target.value)} placeholder="No limit" /></label>
-          <button className="save-button" type="submit" disabled={!people.length || busy}>Save limits</button>
+      {activeTab === 'rules' && <section className="tab-panel" id="rules-panel" role="tabpanel" aria-labelledby="rules-tab">
+        <div className="panel-heading"><div><p className="eyebrow">ASSIGNMENT CONSTRAINTS</p><h2>Rules</h2></div></div>
+        <form className="rule-form" onSubmit={saveAssignmentRule}>
+          <label className="field-label"><span>Person</span><select value={assignmentPerson} onChange={(event) => setAssignmentPerson(event.target.value)} required><option value="">Choose person</option>{people.map((person) => <option key={person.person_id} value={person.name}>{person.name}</option>)}</select></label>
+          <label className="field-label"><span>Assignment</span><select value={assignmentOperation} onChange={(event) => setAssignmentOperation(event.target.value)}>
+            <option value="is_assigned">is assigned</option><option value="may_not_be_assigned">may not be assigned</option>
+          </select></label>
+          <label className="field-label"><span>Chore</span><select value={assignmentChore} onChange={(event) => setAssignmentChore(event.target.value)} required><option value="">Choose chore</option>{chores.map((chore) => <option key={chore.chore_id} value={chore.name}>{chore.label}</option>)}</select></label>
+          <label className="field-label"><span>On weekday</span><select value={assignmentWeekday} onChange={(event) => setAssignmentWeekday(event.target.value)}>{WEEKDAYS.map((day) => <option key={day}>{day}</option>)}</select></label>
+          <button className="save-button" type="submit" disabled={!people.length || !chores.length || busy}>Add rule</button>
         </form>
-        {rules.length > 0 && <ul className="limit-list">{rules.map((rule) => <li key={rule.person}><strong>{rule.person}</strong><span>{rule.minimum} minimum</span><span>{rule.maximum ?? 'No maximum'}</span></li>)}</ul>}
+        {assignmentRules.length > 0 ? <div className="rules-table-wrap"><table className="data-table rules-table">
+          <thead><tr><th>Person</th><th>Assignment</th><th>Chore</th><th>Weekday</th><th><span className="sr-only">Actions</span></th></tr></thead>
+          <tbody>{assignmentRules.map((rule) => <tr key={rule.rule_id}>
+            <td>{rule.person}</td>
+            <td>{rule.operation === 'is_assigned' ? 'is assigned' : 'may not be assigned'}</td>
+            <td>{rule.chore}</td>
+            <td>{rule.weekday}</td>
+            <td className="table-actions"><button className="remove-button" type="button" onClick={() => deleteAssignmentRule(rule)} aria-label={`Delete rule for ${rule.person}, ${rule.chore} on ${rule.weekday}`} title="Delete rule">×</button></td>
+          </tr>)}</tbody>
+        </table></div> : <p className="empty-note">No rules yet.</p>}
       </section>}
 
       {activeTab === 'charts' && <section className="tab-panel charts-panel" id="charts-panel" role="tabpanel" aria-labelledby="charts-tab">
@@ -770,19 +850,29 @@ function App() {
                 {WEEKDAYS.map((weekday) => {
                   const assignment = row.peopleByWeekday[weekday]
                   const person = people.find((item) => item.person_id === assignment?.person_id)
+                  const matchingRules = assignmentRules.filter((rule) =>
+                    rule.chore.toLocaleLowerCase() === assignment?.chore.toLocaleLowerCase()
+                    && rule.weekday === weekday,
+                  )
+                  const fixedRule = matchingRules.find((rule) => rule.operation === 'is_assigned')
                   return <td key={weekday}>{assignment && <>
                     {editingSchedule
                       ? <select
                         aria-label={`Change person for ${row.label}, ${weekday}`}
                         className="assignment-editor"
+                        disabled={fixedRule?.person === assignment.person}
                         value={assignment.person_id}
                         onChange={(event) => setEditAssignments((current) => ({
                           ...current,
                           [assignment.assignment_id]: Number(event.target.value),
                         }))}
-                      >{people.map((item) => <option key={item.person_id} value={item.person_id}>{item.name}</option>)}</select>
+                      >{people.map((item) => <option
+                        disabled={(fixedRule && item.name !== fixedRule.person)
+                          || matchingRules.some((rule) => rule.operation === 'may_not_be_assigned' && rule.person === item.name)}
+                        key={item.person_id}
+                        value={item.person_id}
+                      >{item.name}</option>)}</select>
                       : <PersonCell person={person ?? { name: assignment.person, cell_color: '#e7f1ec', cell_color_mid: null, cell_color_end: '#dce8f1', cell_fill: 'solid' }} />}
-                    <span className="assignment-print-name">{assignment.person}</span>
                   </>}</td>
                 })}
                 {editingSchedule && people.map((person, index) => <td className={index === 0 ? 'row-tally tally-start' : 'row-tally'} key={person.person_id}>{rowTallies[person.person_id]?.total ?? 0}</td>)}

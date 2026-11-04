@@ -4,6 +4,7 @@ from time import perf_counter
 from chore_chart.domain import (
     Assignment,
     AssignmentRule,
+    ChoreAssignmentRule,
     BusyBlock,
     Chore,
     ChoreOccurrence,
@@ -561,3 +562,23 @@ def test_minimum_above_eligible_occurrence_count_is_explained():
             [Chore("Dishes", (occurrence,))],
             [AssignmentRule("Alex", minimum=2)],
         )
+
+
+def test_chore_assignment_rules_force_or_prohibit_assignments():
+    dishes = make_occurrence("Dishes", Weekday.MONDAY)
+    laundry = make_occurrence("Laundry", Weekday.TUESDAY, "Evening")
+    people = [Person("Alex"), Person("Sam")]
+    chores = [Chore("Dishes", (dishes,)), Chore("Laundry", (laundry,))]
+
+    schedule = generate_schedule(
+        people,
+        chores,
+        seed=17,
+        assignment_rules=[
+            ChoreAssignmentRule("Alex", "Dishes", Weekday.MONDAY, True),
+            ChoreAssignmentRule("Alex", "Laundry", Weekday.TUESDAY, False),
+        ],
+    )
+
+    assignments = {item.occurrence.chore_name: item.person_name for item in schedule.assignments}
+    assert assignments == {"Dishes": "Alex", "Laundry": "Sam"}

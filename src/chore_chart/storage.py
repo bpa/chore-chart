@@ -14,6 +14,7 @@ from chore_chart.domain import (
     AssignmentRule,
     BusyBlock,
     Chore,
+    ChoreAssignmentRule,
     ChoreOccurrence,
     Person,
     Schedule,
@@ -94,6 +95,17 @@ class RuleRecord(Base):
     person_id: Mapped[int] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"), unique=True)
     minimum: Mapped[int] = mapped_column(default=0)
     maximum: Mapped[int | None]
+
+
+class ChoreAssignmentRuleRecord(Base):
+    __tablename__ = "chore_assignment_rules"
+    __table_args__ = (UniqueConstraint("person_id", "chore_id", "weekday"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    person_id: Mapped[int] = mapped_column(ForeignKey("people.id", ondelete="CASCADE"))
+    chore_id: Mapped[int] = mapped_column(ForeignKey("chores.id", ondelete="CASCADE"))
+    weekday: Mapped[str] = mapped_column(String(9))
+    is_assigned: Mapped[bool]
 
 
 class ScheduleRecord(Base):
@@ -921,6 +933,88 @@ class SQLiteRepository:
             for row, name in rows
         ]
 
+    def set_chore_assignment_rule(
+        self,
+        person_name: str,
+        chore_name: str,
+        weekday: Weekday,
+        is_assigned: bool,
+    ) -> ChoreAssignmentRule:
+        rule = ChoreAssignmentRule(person_name, chore_name, weekday, is_assigned)
+        with self._sessions.begin() as session:
+            person = session.scalar(select(PersonRecord).where(PersonRecord.name == rule.person_name))
+            chore = session.scalar(select(ChoreRecord).where(ChoreRecord.name == rule.chore_name))
+            if person is None:
+                raise ValueError(f"Unknown person {rule.person_name!r}.")
+            if chore is None:
+                raise ValueError(f"Unknown chore {rule.chore_name!r}.")
+            if rule.is_assigned:
+                conflicting_assignment = session.scalar(
+                    select(ChoreAssignmentRuleRecord).where(
+                        ChoreAssignmentRuleRecord.chore_id == chore.id,
+                        ChoreAssignmentRuleRecord.weekday == rule.weekday.value,
+                        ChoreAssignmentRuleRecord.is_assigned.is_(True),
+                        ChoreAssignmentRuleRecord.person_id != person.id,
+                    )
+                )
+                if conflicting_assignment is not None:
+                    raise ValueError(
+                        f"Another person is already required to do {rule.chore_name} on "
+                        f"{rule.weekday.value}."
+                    )
+            record = session.scalar(
+                select(ChoreAssignmentRuleRecord).where(
+                    ChoreAssignmentRuleRecord.person_id == person.id,
+                    ChoreAssignmentRuleRecord.chore_id == chore.id,
+                    ChoreAssignmentRuleRecord.weekday == rule.weekday.value,
+                )
+            )
+            if record is None:
+                record = ChoreAssignmentRuleRecord(
+                    person_id=person.id,
+                    chore_id=chore.id,
+                    weekday=rule.weekday.value,
+                    is_assigned=rule.is_assigned,
+                )
+                session.add(record)
+                session.flush()
+            else:
+                record.is_assigned = rule.is_assigned
+            rule = ChoreAssignmentRule(
+                rule.person_name, rule.chore_name, rule.weekday, rule.is_assigned, record.id
+            )
+        return rule
+
+    def list_chore_assignment_rules(self) -> list[ChoreAssignmentRule]:
+        with self._sessions() as session:
+            rows = session.execute(
+                select(ChoreAssignmentRuleRecord, PersonRecord.name, ChoreRecord.name)
+                .join(PersonRecord, PersonRecord.id == ChoreAssignmentRuleRecord.person_id)
+                .join(ChoreRecord, ChoreRecord.id == ChoreAssignmentRuleRecord.chore_id)
+                .order_by(
+                    ChoreAssignmentRuleRecord.weekday,
+                    ChoreRecord.name,
+                    PersonRecord.name,
+                )
+            ).all()
+        return [
+            ChoreAssignmentRule(
+                person_name,
+                chore_name,
+                Weekday.parse(record.weekday),
+                record.is_assigned,
+                record.id,
+            )
+            for record, person_name, chore_name in rows
+        ]
+
+    def delete_chore_assignment_rule(self, rule_id: int) -> None:
+        with self._sessions.begin() as session:
+            record = session.get(ChoreAssignmentRuleRecord, rule_id)
+            if record is None:
+                raise ValueError(f"No chore assignment rule with id {rule_id}.")
+            session.delete(record)
+
     def generate_and_save(self, seed: int | None = None) -> Schedule:
         from chore_chart.scheduler import generate_schedule
 
@@ -928,6 +1022,7 @@ class SQLiteRepository:
             people=self.list_people(),
             chores=self.list_chores(),
             rules=self.list_rules(),
+            assignment_rules=self.list_chore_assignment_rules(),
             history=self.recent_schedules(4),
             seed=seed,
         )
@@ -1042,6 +1137,21 @@ class SQLiteRepository:
             ) if person_ids else set()
             if person_ids != existing_person_ids:
                 raise ValueError("One or more selected people do not exist.")
+            assignment_persons = dict(assignments)
+            assignment_rules = session.scalars(select(ChoreAssignmentRuleRecord)).all()
+            for record in records:
+                new_person_id = assignment_persons[record.id]
+                for rule in assignment_rules:
+                    if rule.chore_id != record.chore_id or rule.weekday != record.weekday:
+                        continue
+                    if rule.is_assigned and new_person_id != rule.person_id:
+                        raise ValueError(
+                            f"This assignment is fixed to the required person for {record.weekday}."
+                        )
+                    if not rule.is_assigned and new_person_id == rule.person_id:
+                        raise ValueError(
+                            f"This person may not be assigned this chore on {record.weekday}."
+                        )
             for assignment_id, person_id in assignments:
                 records_by_id[assignment_id].person_id = person_id
         return self.get_schedule(schedule_id)

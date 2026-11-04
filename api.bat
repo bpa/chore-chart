@@ -17,5 +17,5 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 set "CHORE_CHART_DB=%~dp0chore_chart.sqlite3"
-".venv\Scripts\python.exe" -m uvicorn chore_chart.api:app --app-dir "%~dp0src" --reload --host 127.0.0.1 --port 8000
+".venv\Scripts\python.exe" -m uvicorn chore_chart.api:app --app-dir "%~dp0src" --reload --host 0.0.0.0 --port 8000
 exit /b %errorlevel%
