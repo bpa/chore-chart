@@ -38,7 +38,7 @@ input::placeholder { color: #9a9d95; }
 .person-cell svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .person-cell > span { position: relative; max-width: 100%; overflow: hidden; padding: 2px 4px; text-overflow: ellipsis; white-space: nowrap; }
 .person-name { flex: 1; color: var(--ink); font-size: 13px; }
-.person-style-editor { display: grid; grid-template-columns: minmax(120px, 1fr) repeat(3, minmax(110px, .7fr)); align-items: end; gap: 10px; margin: 0 0 12px; }
+.person-style-editor { display: grid; grid-template-columns: minmax(100px, 1fr) repeat(4, minmax(95px, .7fr)); align-items: end; gap: 10px; margin: 0 0 12px; }
 .person-style-preview .person-cell { width: 100%; min-height: 42px; font-size: 12px; }
 .person-style-editor input[type="color"] { width: 100%; height: 36px; padding: 3px; cursor: pointer; }
 .person-style-editor .midpoint-color > span { align-items: center; }
@@ -247,6 +247,6 @@ input::placeholder { color: #9a9d95; }
   .chart-table small { margin-left: 1mm; color: #5e6862; font-size: 6pt; font-weight: 400; }
   .chart-table tbody td { color: #245b49; }
   .assignment-editor { display: none !important; }
-  .person-cell { width: 100%; height: 100%; min-height: 0; color: #202c29 !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .person-cell { width: 100%; height: 100%; min-height: 0; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
   .person-cell > span { overflow: visible; padding: 0 4px; text-overflow: clip; }
 }

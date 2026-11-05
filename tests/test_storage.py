@@ -29,6 +29,7 @@ def test_people_and_labeled_busy_times_round_trip(repository):
     assert person.cell_color_mid is None
     assert person.cell_color_end == "#dce8f1"
     assert person.cell_fill == "solid"
+    assert person.cell_text_color == "#202c29"
     assert person.busy_times == {
         BusyBlock(Weekday.MONDAY, TimeRange.parse("08:00-12:00"), "Work"),
         BusyBlock(Weekday.SATURDAY, TimeRange.parse("13:00-18:00")),
@@ -39,7 +40,7 @@ def test_person_cell_style_round_trips(repository):
     person = repository.add_person("Alex")
 
     repository.set_person_cell_style(
-        person.person_id, "#f2c94c", "#ef8b67", "linear-diagonal-up", "#b7c9dc"
+        person.person_id, "#f2c94c", "#ef8b67", "linear-diagonal-up", "#b7c9dc", "#ffffff"
     )
 
     saved_person = repository.list_people()[0]
@@ -47,6 +48,7 @@ def test_person_cell_style_round_trips(repository):
     assert saved_person.cell_color_mid == "#b7c9dc"
     assert saved_person.cell_color_end == "#ef8b67"
     assert saved_person.cell_fill == "linear-diagonal-up"
+    assert saved_person.cell_text_color == "#ffffff"
 
 
 def test_setting_busy_times_replaces_previous_blocks(repository):

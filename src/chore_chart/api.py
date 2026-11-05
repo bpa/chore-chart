@@ -24,6 +24,7 @@ class PersonCellStylePayload(BaseModel):
     cell_color: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
     cell_color_mid: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
     cell_color_end: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
+    cell_text_color: str = Field(default="#202c29", pattern=r"^#[0-9A-Fa-f]{6}$")
     cell_fill: Literal[
         "solid",
         "linear-horizontal",
@@ -114,6 +115,7 @@ def _serialize_person(person: Any) -> dict[str, Any]:
         "cell_color": person.cell_color,
         "cell_color_mid": person.cell_color_mid,
         "cell_color_end": person.cell_color_end,
+        "cell_text_color": person.cell_text_color,
         "cell_fill": person.cell_fill,
         "busy_times": [
             {"weekday": block.weekday.value, "time_range": str(block.time_range), "label": block.label}
@@ -219,6 +221,7 @@ def update_person_cell_style(
             payload.cell_color_end,
             payload.cell_fill,
             payload.cell_color_mid,
+            payload.cell_text_color,
         )
         person = next(
             person for person in repository.list_people() if person.person_id == person_id

@@ -150,7 +150,7 @@ function PersonCell({ person }) {
   const fill = isGradient ? `url(#${gradientId})` : person.cell_color
 
   return (
-    <span className="person-cell">
+    <span className="person-cell" style={{ color: person.cell_text_color ?? '#202c29' }}>
       <svg aria-hidden="true" preserveAspectRatio="none" viewBox="0 0 120 36">
         {isGradient && <defs>
           {isLinear
@@ -245,7 +245,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('charts')
   const [personName, setPersonName] = useState('')
   const [stylePersonId, setStylePersonId] = useState(null)
-  const [styleDraft, setStyleDraft] = useState({ cell_color: '#e7f1ec', cell_color_mid: null, cell_color_end: '#dce8f1', cell_fill: 'solid' })
+  const [styleDraft, setStyleDraft] = useState({ cell_color: '#e7f1ec', cell_color_mid: null, cell_color_end: '#dce8f1', cell_fill: 'solid', cell_text_color: '#202c29' })
   const [choreName, setChoreName] = useState('')
   const [choreLabel, setChoreLabel] = useState('')
   const [sectionName, setSectionName] = useState('')
@@ -290,7 +290,31 @@ function App() {
   }
 
   useEffect(() => {
-    refresh().catch((error) => setMessage(`API unavailable: ${error.message}`))
+    let active = true
+    const loadInitialData = async () => {
+      try {
+        const [peopleData, sectionData, choreData, ruleData, assignmentRuleData, scheduleData] = await Promise.all([
+          request('/people'), request('/sections'), request('/chores'), request('/rules'),
+          request('/assignment-rules'), request('/schedules?limit=20'),
+        ])
+        if (!active) return
+        setPeople(peopleData)
+        setSections(sectionData)
+        setSectionDrafts(Object.fromEntries(sectionData.map((section) => [section.section_id, {
+          name: section.name,
+        }])))
+        setChores(choreData)
+        setRules(ruleData)
+        setAssignmentRules(assignmentRuleData)
+        setSchedules(scheduleData)
+        setSchedule(scheduleData[0] ?? null)
+        setChoreSectionId(String(sectionData[0]?.section_id ?? ''))
+      } catch (error) {
+        if (active) setMessage(`API unavailable: ${error.message}`)
+      }
+    }
+    loadInitialData()
+    return () => { active = false }
   }, [])
 
   const run = async (action) => {
@@ -392,6 +416,7 @@ function App() {
       cell_color_mid: person.cell_color_mid,
       cell_color_end: person.cell_color_end,
       cell_fill: person.cell_fill,
+      cell_text_color: person.cell_text_color ?? '#202c29',
     })
   }
 
@@ -660,6 +685,7 @@ function App() {
             <option value="solid">Solid</option><option value="linear-horizontal">Linear: horizontal</option><option value="linear-vertical">Linear: vertical</option><option value="linear-diagonal-down">Linear: diagonal down</option><option value="linear-diagonal-up">Linear: diagonal up</option><option value="radial">Radial gradient</option>
           </select></label>
           <label className="field-label"><span>{styleDraft.cell_fill === 'solid' ? 'Background' : 'Start color'}</span><input aria-label={`${editingStylePerson.name} cell start color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color: event.target.value })} type="color" value={styleDraft.cell_color} /></label>
+          <label className="field-label"><span>Text color</span><input aria-label={`${editingStylePerson.name} cell text color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_text_color: event.target.value })} type="color" value={styleDraft.cell_text_color} /></label>
           {styleDraft.cell_fill !== 'solid' && <label className="field-label"><span>End color</span><input aria-label={`${editingStylePerson.name} cell end color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_end: event.target.value })} type="color" value={styleDraft.cell_color_end} /></label>}
           {styleDraft.cell_fill.startsWith('linear-') && <label className="field-label midpoint-color">
             <span><input aria-label={`${editingStylePerson.name} add middle color`} checked={Boolean(styleDraft.cell_color_mid)} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_mid: event.target.checked ? '#b7c9dc' : null })} type="checkbox" />Middle color</span>
@@ -872,7 +898,7 @@ function App() {
                         key={item.person_id}
                         value={item.person_id}
                       >{item.name}</option>)}</select>
-                      : <PersonCell person={person ?? { name: assignment.person, cell_color: '#e7f1ec', cell_color_mid: null, cell_color_end: '#dce8f1', cell_fill: 'solid' }} />}
+                      : <PersonCell person={person ?? { name: assignment.person, cell_color: '#e7f1ec', cell_color_mid: null, cell_color_end: '#dce8f1', cell_fill: 'solid', cell_text_color: '#202c29' }} />}
                   </>}</td>
                 })}
                 {editingSchedule && people.map((person, index) => <td className={index === 0 ? 'row-tally tally-start' : 'row-tally'} key={person.person_id}>{rowTallies[person.person_id]?.total ?? 0}</td>)}

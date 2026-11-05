@@ -163,6 +163,7 @@ class Person:
     cell_color_mid: str | None = None
     cell_color_end: str = "#dce8f1"
     cell_fill: str = "solid"
+    cell_text_color: str = "#202c29"
 
     def __post_init__(self) -> None:
         name = self.name.strip()

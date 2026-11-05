@@ -41,6 +41,7 @@ class PersonRecord(Base):
     cell_color_mid: Mapped[str | None] = mapped_column(String(7), nullable=True)
     cell_color_end: Mapped[str] = mapped_column(String(7), default="#dce8f1")
     cell_fill: Mapped[str] = mapped_column(String(8), default="solid")
+    cell_text_color: Mapped[str] = mapped_column(String(7), default="#202c29")
 
 
 class BusyTimeRecord(Base):
@@ -167,6 +168,10 @@ class SQLiteRepository:
                 if "cell_fill" not in people_columns:
                     connection.exec_driver_sql(
                         "ALTER TABLE people ADD COLUMN cell_fill VARCHAR(8) NOT NULL DEFAULT 'solid'"
+                    )
+                if "cell_text_color" not in people_columns:
+                    connection.exec_driver_sql(
+                        "ALTER TABLE people ADD COLUMN cell_text_color VARCHAR(7) NOT NULL DEFAULT '#202c29'"
                     )
             if "chores" not in tables:
                 return
@@ -502,6 +507,7 @@ class SQLiteRepository:
                 cell_color_mid=record.cell_color_mid,
                 cell_color_end=record.cell_color_end,
                 cell_fill=record.cell_fill,
+                cell_text_color=record.cell_text_color,
             )
             for record in records
         ]
@@ -513,6 +519,7 @@ class SQLiteRepository:
         cell_color_end: str,
         cell_fill: str,
         cell_color_mid: str | None,
+        cell_text_color: str = "#202c29",
     ) -> None:
         with self._sessions.begin() as session:
             person = session.get(PersonRecord, person_id)
@@ -522,6 +529,7 @@ class SQLiteRepository:
             person.cell_color_mid = cell_color_mid
             person.cell_color_end = cell_color_end
             person.cell_fill = cell_fill
+            person.cell_text_color = cell_text_color
 
     def set_busy_times(self, person_name: str, blocks: Iterable[BusyBlock]) -> None:
         normalized_blocks = set(blocks)
