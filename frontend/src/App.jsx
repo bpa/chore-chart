@@ -681,16 +681,29 @@ function App() {
         {editingStylePerson && <form className="editor person-style-editor" onSubmit={(event) => savePersonStyle(event, editingStylePerson)}>
           <div className="editor-title"><strong>{editingStylePerson.name} · Cell style</strong><button type="button" className="close-button" onClick={() => setStylePersonId(null)} aria-label="Close cell style editor">×</button></div>
           <div className="person-style-preview"><PersonCell person={{ ...editingStylePerson, ...styleDraft }} /></div>
-          <label className="field-label"><span>Fill</span><select aria-label={`${editingStylePerson.name} cell fill`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_fill: event.target.value })} value={styleDraft.cell_fill}>
+          <label className="field-label text-color-control"><span>Text color</span><input aria-label={`${editingStylePerson.name} cell text color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_text_color: event.target.value })} type="color" value={styleDraft.cell_text_color} /></label>
+          <div className="field-label fill-control">
+            <div className="fill-control-heading">
+              <span>Fill</span>
+            </div>
+            <select aria-label={`${editingStylePerson.name} cell fill`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_fill: event.target.value })} value={styleDraft.cell_fill}>
             <option value="solid">Solid</option><option value="linear-horizontal">Linear: horizontal</option><option value="linear-vertical">Linear: vertical</option><option value="linear-diagonal-down">Linear: diagonal down</option><option value="linear-diagonal-up">Linear: diagonal up</option><option value="radial">Radial gradient</option>
-          </select></label>
-          <label className="field-label"><span>{styleDraft.cell_fill === 'solid' ? 'Background' : 'Start color'}</span><input aria-label={`${editingStylePerson.name} cell start color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color: event.target.value })} type="color" value={styleDraft.cell_color} /></label>
-          <label className="field-label"><span>Text color</span><input aria-label={`${editingStylePerson.name} cell text color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_text_color: event.target.value })} type="color" value={styleDraft.cell_text_color} /></label>
-          {styleDraft.cell_fill !== 'solid' && <label className="field-label"><span>End color</span><input aria-label={`${editingStylePerson.name} cell end color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_end: event.target.value })} type="color" value={styleDraft.cell_color_end} /></label>}
-          {styleDraft.cell_fill.startsWith('linear-') && <label className="field-label midpoint-color">
-            <span><input aria-label={`${editingStylePerson.name} add middle color`} checked={Boolean(styleDraft.cell_color_mid)} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_mid: event.target.checked ? '#b7c9dc' : null })} type="checkbox" />Middle color</span>
-            {styleDraft.cell_color_mid && <input aria-label={`${editingStylePerson.name} cell middle color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_mid: event.target.value })} type="color" value={styleDraft.cell_color_mid} />}
-          </label>}
+            </select>
+          </div>
+          <label className="field-label start-color-control"><span>{styleDraft.cell_fill === 'solid' ? 'Background' : 'Start color'}</span><input aria-label={`${editingStylePerson.name} cell start color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color: event.target.value })} type="color" value={styleDraft.cell_color} /></label>
+          <div className="field-label middle-color-control">
+            <label className="midpoint-toggle">
+              <input aria-label={`${editingStylePerson.name} add middle color`} checked={styleDraft.cell_fill.startsWith('linear-') && Boolean(styleDraft.cell_color_mid)} disabled={!styleDraft.cell_fill.startsWith('linear-')} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_mid: event.target.checked ? '#b7c9dc' : null })} type="checkbox" />
+              <span>Middle color</span>
+            </label>
+            <div className="middle-color-picker">
+              <input aria-label={`${editingStylePerson.name} cell middle color`} disabled={!styleDraft.cell_fill.startsWith('linear-') || !styleDraft.cell_color_mid} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_mid: event.target.value })} type="color" value={styleDraft.cell_color_mid ?? '#f0f2ee'} />
+              {(!styleDraft.cell_fill.startsWith('linear-') || !styleDraft.cell_color_mid) && <span className="middle-color-status" aria-hidden="true">{styleDraft.cell_fill.startsWith('linear-') ? 'Off' : 'Unavailable'}</span>}
+            </div>
+          </div>
+          <div className="end-color-control">
+            {styleDraft.cell_fill !== 'solid' && <label className="field-label"><span>End color</span><input aria-label={`${editingStylePerson.name} cell end color`} onChange={(event) => setStyleDraft({ ...styleDraft, cell_color_end: event.target.value })} type="color" value={styleDraft.cell_color_end} /></label>}
+          </div>
           <div className="person-style-actions"><button className="save-button" type="submit" disabled={busy}>Save style</button><button className="text-button" type="button" onClick={() => setStylePersonId(null)}>Cancel</button></div>
         </form>}
         {editingLimitPerson && <form className="editor limit-form person-limit-editor" onSubmit={saveRule}>
